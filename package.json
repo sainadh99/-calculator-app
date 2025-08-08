@@ -1,0 +1,18 @@
+{
+  "name": "calculator-app",
+  "version": "1.0.0",
+  "description": "Secure calculator API with Node.js and Express",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-validator": "^6.14.3",
+    "helmet": "^7.0.0",
+    "express-rate-limit": "^6.7.0",
+    "sqlite3": "^5.1.4",
+    "dotenv": "^16.3.1"
+  }
+}
+
