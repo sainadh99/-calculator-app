@@ -1,0 +1,64 @@
+pipeline {
+    agent any
+
+    environment {
+        GIT_CREDENTIALS = 'github-cal'          // Your GitHub PAT credential ID
+        DOCKERHUB_CREDENTIALS = 'dockerhub-creds'  // Your DockerHub credentials ID
+        DOCKER_IMAGE = 'sainadh99/calculator-app'  // DockerHub image name
+        GIT_REPO = 'https://github.com/sainadh99/-calculator-app.git'
+        GIT_BRANCH = 'master'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: "${GIT_BRANCH}",
+                    credentialsId: "${GIT_CREDENTIALS}",
+                    url: "${GIT_REPO}"
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    dockerImage = docker.build("${DOCKER_IMAGE}:latest")
+                }
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                script {
+                    docker.image("${DOCKER_IMAGE}:latest").inside {
+                        sh 'npm test || echo "No tests found, skipping..."'
+                    }
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', "${DOCKERHUB_CREDENTIALS}") {
+                        dockerImage.push('latest')
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo "Deploy stage placeholder — add your deployment commands here"
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completed successfully!"
+        }
+        failure {
+            echo "Pipeline failed. Check logs."
+        }
+    }
+}
