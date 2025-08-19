@@ -1,16 +1,41 @@
+// Declare global variable to store start time
+def startTime
+
 pipeline {
     agent any
 
+    // 🔹 Enable GitHub Webhook trigger
+    triggers {
+        githubPush()   // Runs when GitHub sends a webhook (push event)
+    }
+
     environment {
-        GIT_CREDENTIALS = 'github-cal'          // Your GitHub PAT credential ID
-        DOCKERHUB_CREDENTIALS = 'dockerhub-creds'  // Your DockerHub credentials ID
-        DOCKER_IMAGE = 'sainadh99/calculator-app'  // DockerHub image name
-        GIT_REPO = 'https://github.com/sainadh99/-calculator-app.git'
-        GIT_BRANCH = 'master'
+        GIT_CREDENTIALS       = 'github-cal'
+        DOCKERHUB_CREDENTIALS = 'dockerhub-creds'
+        DOCKER_IMAGE          = 'sainadh99/calculator-app'
+        GIT_REPO              = 'https://github.com/sainadh99/-calculator-app.git'
+        GIT_BRANCH            = 'master'
+        SSH_CRED_ID           = 'vm-ssh-creds'
+        DEPLOY_HOST           = '34.134.95.91'
+        DEPLOY_DIR            = '/home/ubuntu/calculator-app'
+        CONTAINER_NAME        = 'calculator-app'
+        APP_PORT              = '3000'
+        SLACK_CHANNEL         = '#devops'
+        SLACK_CREDENTIAL_ID   = 'slack-token'
+        EMAIL_RECIPIENT       = 'narnesainadh81@gmail.com'
     }
 
     stages {
-        stage('Checkout') {
+        stage('Initializer Timer') {
+            steps {
+                script {
+                    startTime = System.currentTimeMillis()
+                    echo "⏳ Pipeline started at: ${new Date()}"
+                }
+            }
+        }
+
+        stage('Checkout Source Code') {
             steps {
                 git branch: "${GIT_BRANCH}",
                     credentialsId: "${GIT_CREDENTIALS}",
@@ -18,47 +43,108 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    dockerImage = docker.build("${DOCKER_IMAGE}:latest")
-                }
-            }
-        }
-
-        stage('Run Tests') {
-            steps {
-                script {
-                    docker.image("${DOCKER_IMAGE}:latest").inside {
-                        sh 'npm test || echo "No tests found, skipping..."'
-                    }
-                }
-            }
-        }
-
-        stage('Push Docker Image') {
+        stage('Docker Login') {
             steps {
                 script {
                     docker.withRegistry('https://index.docker.io/v1/', "${DOCKERHUB_CREDENTIALS}") {
-                        dockerImage.push('latest')
+                        echo "✅ Logged in to DockerHub"
                     }
                 }
             }
         }
 
-        stage('Deploy') {
+        stage('Build & Push Docker Image') {
             steps {
-                echo "Deploy stage placeholder — add your deployment commands here"
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', "${DOCKERHUB_CREDENTIALS}") {
+                        sh """
+                        docker build -t ${DOCKER_IMAGE}:latest .
+                        docker push ${DOCKER_IMAGE}:latest
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Test SSH to VM') {
+            steps {
+                script {
+                    sshagent(credentials: ["${SSH_CRED_ID}"]) {
+                        sh """
+                        echo '🔑 Testing SSH Connection...'
+                        ssh -o StrictHostKeyChecking=no ubuntu@${DEPLOY_HOST} 'echo "✅ SSH connection successful to \\\$(hostname)"'
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to VM') {
+            steps {
+                script {
+                    sshagent(credentials: ["${SSH_CRED_ID}"]) {
+                        sh """
+                        ssh -o StrictHostKeyChecking=no ubuntu@${DEPLOY_HOST} '
+                            echo "➡️ Connected to VM – Deploying Calculator App..."
+                            docker rm -f ${CONTAINER_NAME} || true
+                            docker pull ${DOCKER_IMAGE}:latest
+                            docker run -d --name ${CONTAINER_NAME} -p ${APP_PORT}:${APP_PORT} ${DOCKER_IMAGE}:latest
+                            echo "✅ App deployed at: http://${DEPLOY_HOST}:${APP_PORT}"
+                        '
+                        """
+                    }
+                }
             }
         }
     }
 
     post {
         success {
-            echo "Pipeline completed successfully!"
+            script {
+                def durationMillis = System.currentTimeMillis() - startTime
+                def durationSecs = (durationMillis / 1000).toInteger()
+                def mins = durationSecs / 60
+                def secs = durationSecs % 60
+
+                slackSend(
+                    channel: "${SLACK_CHANNEL}",
+                    color: "good",
+                    tokenCredentialId: "${SLACK_CREDENTIAL_ID}",
+                    message: """*Jenkins Pipeline Success*
+*Job:* ${env.JOB_NAME} (#${env.BUILD_NUMBER})
+*URL:* ${env.BUILD_URL}
+*Duration:* ${mins} min ${secs} sec"""
+                )
+            }
+            echo "🎉 Deployment successful!"
         }
         failure {
-            echo "Pipeline failed. Check logs."
+            script {
+                // Save console logs into a Word document
+                sh """
+                mkdir -p logs
+                curl -s ${env.BUILD_URL}consoleText > logs/console.log
+                pandoc logs/console.log -o logs/console_output.docx --standalone
+                """
+
+                // Send email with attachment
+                emailext(
+                    to: "${EMAIL_RECIPIENT}",
+                    subject: "❌ Pipeline FAILED: ${env.JOB_NAME} (#${env.BUILD_NUMBER})",
+                    body: """The Jenkins pipeline has failed.
+
+*Job:* ${env.JOB_NAME} (#${env.BUILD_NUMBER})
+*URL:* ${env.BUILD_URL}
+
+Please find the attached console logs for debugging.""",
+                    attachmentsPattern: 'logs/console_output.docx'
+                )
+            }
+            echo "❌ Deployment failed. Email with logs sent."
+        }
+        always {
+            echo "🏁 Pipeline finished at: ${new Date()}"
         }
     }
 }
+
