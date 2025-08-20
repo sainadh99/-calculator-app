@@ -21,8 +21,10 @@ pipeline {
         CONTAINER_NAME        = 'calculator-app'
         APP_PORT              = '3000'
         SLACK_CHANNEL         = '#devops'
-        SLACK_CREDENTIAL_ID   = 'slack-token'
-        EMAIL_RECIPIENT       = 'narnesainadh81@gmail.com'
+        SLACK_CREDENTIAL_ID   = 'token'
+        EMAIL_RECIPIENT       = 'sainarne835@gmail.com'
+        JOB_NAME_FIXED        = 'ciintegration'   // ✅ Clean job name without spaces
+        JENKINS_URL           = 'http://34.134.95.91:8080' // ✅ Jenkins base URL
     }
 
     stages {
@@ -106,13 +108,15 @@ pipeline {
                 def mins = durationSecs / 60
                 def secs = durationSecs % 60
 
+                def buildUrlFixed = "${JENKINS_URL}/job/${JOB_NAME_FIXED}/${env.BUILD_NUMBER}/"
+
                 slackSend(
                     channel: "${SLACK_CHANNEL}",
                     color: "good",
                     tokenCredentialId: "${SLACK_CREDENTIAL_ID}",
-                    message: """*Jenkins Pipeline Success*
+                    message: """*✅ Jenkins Pipeline Success*
 *Job:* ${env.JOB_NAME} (#${env.BUILD_NUMBER})
-*URL:* ${env.BUILD_URL}
+*URL:* ${buildUrlFixed}
 *Duration:* ${mins} min ${secs} sec"""
                 )
             }
@@ -127,6 +131,8 @@ pipeline {
                 pandoc logs/console.log -o logs/console_output.docx --standalone
                 """
 
+                def buildUrlFixed = "${JENKINS_URL}/job/${JOB_NAME_FIXED}/${env.BUILD_NUMBER}/"
+
                 // Send email with attachment
                 emailext(
                     to: "${EMAIL_RECIPIENT}",
@@ -134,13 +140,22 @@ pipeline {
                     body: """The Jenkins pipeline has failed.
 
 *Job:* ${env.JOB_NAME} (#${env.BUILD_NUMBER})
-*URL:* ${env.BUILD_URL}
+*URL:* ${buildUrlFixed}
 
 Please find the attached console logs for debugging.""",
                     attachmentsPattern: 'logs/console_output.docx'
                 )
+
+                slackSend(
+                    channel: "${SLACK_CHANNEL}",
+                    color: "danger",
+                    tokenCredentialId: "${SLACK_CREDENTIAL_ID}",
+                    message: """*❌ Jenkins Pipeline FAILED*
+*Job:* ${env.JOB_NAME} (#${env.BUILD_NUMBER})
+*URL:* ${buildUrlFixed}"""
+                )
             }
-            echo "❌ Deployment failed. Email with logs sent."
+            echo "❌ Deployment failed. Email + Slack notification sent."
         }
         always {
             echo "🏁 Pipeline finished at: ${new Date()}"
@@ -148,3 +163,7 @@ Please find the attached console logs for debugging.""",
     }
 }
 
+        
+
+   
+           
