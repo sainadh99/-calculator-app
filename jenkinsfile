@@ -1,14 +1,14 @@
 // Declare global variable to store start time
 def startTime
-
+ 
 pipeline {
     agent any
-
+ 
     // 🔹 Enable GitHub Webhook trigger
     triggers {
         githubPush()   // Runs when GitHub sends a webhook (push event)
     }
-
+ 
     environment {
         GIT_CREDENTIALS       = 'github-cal'
         DOCKERHUB_CREDENTIALS = 'dockerhub-creds'
@@ -26,7 +26,7 @@ pipeline {
         JOB_NAME_FIXED        = 'ciintegration'   // ✅ Clean job name without spaces
         JENKINS_URL           = 'http://34.134.95.91:8080' // ✅ Jenkins base URL
     }
-
+ 
     stages {
         stage('Initializer Timer') {
             steps {
@@ -36,7 +36,7 @@ pipeline {
                 }
             }
         }
-
+ 
         stage('Checkout Source Code') {
             steps {
                 git branch: "${GIT_BRANCH}",
@@ -44,7 +44,7 @@ pipeline {
                     url: "${GIT_REPO}"
             }
         }
-
+ 
         stage('Docker Login') {
             steps {
                 script {
@@ -54,7 +54,7 @@ pipeline {
                 }
             }
         }
-
+ 
         stage('Build & Push Docker Image') {
             steps {
                 script {
@@ -67,7 +67,7 @@ pipeline {
                 }
             }
         }
-
+ 
         stage('Test SSH to VM') {
             steps {
                 script {
@@ -80,7 +80,7 @@ pipeline {
                 }
             }
         }
-
+ 
         stage('Deploy to VM') {
             steps {
                 script {
@@ -99,7 +99,7 @@ pipeline {
             }
         }
     }
-
+ 
     post {
         success {
             script {
@@ -107,9 +107,9 @@ pipeline {
                 def durationSecs = (durationMillis / 1000).toInteger()
                 def mins = durationSecs / 60
                 def secs = durationSecs % 60
-
+ 
                 def buildUrlFixed = "${JENKINS_URL}/job/${JOB_NAME_FIXED}/${env.BUILD_NUMBER}/"
-
+ 
                 slackSend(
                     channel: "${SLACK_CHANNEL}",
                     color: "good",
@@ -130,22 +130,22 @@ pipeline {
                 curl -s ${env.BUILD_URL}consoleText > logs/console.log
                 pandoc logs/console.log -o logs/console_output.docx --standalone
                 """
-
+ 
                 def buildUrlFixed = "${JENKINS_URL}/job/${JOB_NAME_FIXED}/${env.BUILD_NUMBER}/"
-
+ 
                 // Send email with attachment
                 emailext(
                     to: "${EMAIL_RECIPIENT}",
                     subject: "❌ Pipeline FAILED: ${env.JOB_NAME} (#${env.BUILD_NUMBER})",
                     body: """The Jenkins pipeline has failed.
-
+ 
 *Job:* ${env.JOB_NAME} (#${env.BUILD_NUMBER})
 *URL:* ${buildUrlFixed}
-
+ 
 Please find the attached console logs for debugging.""",
                     attachmentsPattern: 'logs/console_output.docx'
                 )
-
+ 
                 slackSend(
                     channel: "${SLACK_CHANNEL}",
                     color: "danger",
@@ -162,8 +162,3 @@ Please find the attached console logs for debugging.""",
         }
     }
 }
-
-        
-
-   
-           
