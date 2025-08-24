@@ -6,7 +6,6 @@ on:
 
 jobs:
   email_on_approval:
-    # only proceed if the review is Approved AND the PR targets master
     if: ${{ github.event.review.state == 'approved' && github.event.pull_request.base.ref == 'master' }}
     runs-on: ubuntu-latest
     steps:
