@@ -1,0 +1,35 @@
+name: Email on PR Approval
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  email_on_approval:
+    # only proceed if the review is Approved AND the PR targets master
+    if: ${{ github.event.review.state == 'approved' && github.event.pull_request.base.ref == 'master' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          secure: true
+          subject: "PR #${{ github.event.pull_request.number }} approved by ${{ github.event.review.user.login }}"
+          from: "GitHub Actions <${{ secrets.SMTP_USERNAME }}>"
+          to: "sainarne835@gmail.com"
+          body: |
+            ✅ Pull Request Approved
+
+            Repository: ${{ github.repository }}
+            PR: #${{ github.event.pull_request.number }} — "${{ github.event.pull_request.title }}"
+            Approved by: ${{ github.event.review.user.login }}
+            When: ${{ github.event.review.submitted_at }}
+            Link: ${{ github.event.pull_request.html_url }}
+
+            Reviewer comment:
+            ${{ github.event.review.body }}
+
