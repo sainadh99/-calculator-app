@@ -1,23 +1,53 @@
-name: Email on PR Approval
+name: Repo Notifications
 
 on:
+  push:
+  pull_request:
+    types: [opened, reopened, synchronize]
   pull_request_review:
     types: [submitted]
 
 jobs:
-  email_on_approval:
-    if: ${{ github.event.review.state == 'approved' && github.event.pull_request.base.ref == 'master' }}
+  slack_notify:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     steps:
-      - name: Send email
+      - name: Slack Notification
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_USERNAME: "GitHub Bot"
+          SLACK_CHANNEL: "github-integration"
+          SLACK_TITLE: "GitHub Notification"
+          SLACK_MESSAGE: |
+            📢 Event: ${{ github.event_name }}
+            👤 Actor: ${{ github.actor }}
+            📂 Repo: ${{ github.repository }}
+
+            {% if github.event_name == 'push' %}
+            🚀 ${{ github.actor }} pushed commits to branch `${{ github.ref_name }}`
+            🔗 Commit: ${{ github.event.head_commit.url }}
+            {% endif %}
+
+            {% if github.event_name == 'pull_request' %}
+            🔀 ${{ github.actor }} has requested a pull request
+            📌 Title: ${{ github.event.pull_request.title }}
+            🔗 URL: ${{ github.event.pull_request.html_url }}
+            {% endif %}
+
+  email_on_approval:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+    steps:
+      - name: Send Email
         uses: dawidd6/action-send-mail@v3
         with:
-          server_address: ${{ secrets.SMTP_SERVER }}
-          server_port: ${{ secrets.SMTP_PORT }}
+          server_address: smtp.gmail.com
+          server_port: 587
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          secure: true
-          subject: "PR #${{ github.event.pull_request.number }} approved by ${{ github.event.review.user.login }}"
+          secure: true   # STARTTLS
+          subject: "✅ PR #${{ github.event.pull_request.number }} approved by ${{ github.event.review.user.login }}"
           from: "GitHub Actions <${{ secrets.SMTP_USERNAME }}>"
           to: "sainarne835@gmail.com"
           body: |
