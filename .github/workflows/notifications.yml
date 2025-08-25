@@ -16,11 +16,13 @@ jobs:
     steps:
       - name: Notify Slack
         uses: slackapi/slack-github-action@v1.26.0
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
           slack-message: |
+            *Channel:* #github-integration
             *Event:* ${{ github.event_name }}
-            *Repo:* ${{ github.repository }}
+            *Repository:* ${{ github.repository }}
             *Actor:* ${{ github.actor }}
             *PR Title:* ${{ github.event.pull_request.title || 'N/A' }}
             *PR URL:* ${{ github.event.pull_request.html_url || 'N/A' }}
