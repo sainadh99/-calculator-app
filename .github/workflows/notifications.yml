@@ -1,65 +1,55 @@
-name: Repo Notifications
+name: Slack & Email Notifications
 
 on:
   push:
+    branches:
+      - main
   pull_request:
-    types: [opened, reopened, synchronize]
-  pull_request_review:
-    types: [submitted]
+    types: [opened, synchronize, reopened, closed, review_requested, review_request_removed, ready_for_review]
 
 jobs:
-  # Slack notifications for push & pull request
-  slack_notify:
+  notify:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+
     steps:
-      - name: Slack Notification
-        uses: rtCamp/action-slack-notify@v2
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      # --- Slack Notification for Push or Pull Request ---
+      - name: Notify Slack on Push/PR
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "📢 GitHub Event in *-calculator-app* repo:\n
+              *Event:* ${{ github.event_name }}\n
+              *Actor:* ${{ github.actor }}\n
+              *Branch:* ${{ github.ref_name }}\n
+              *Repo:* ${{ github.repository }}\n
+              *PR Title:* ${{ github.event.pull_request.title || '' }}\n
+              *URL:* ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+            }
         env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_USERNAME: "GitHub Bot"
-          SLACK_CHANNEL: "github-integration"
-          SLACK_TITLE: "GitHub Notification"
-          SLACK_MESSAGE: |
-            📢 Event: ${{ github.event_name }}
-            👤 Actor: ${{ github.actor }}
-            📂 Repo: ${{ github.repository }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
-            {% if github.event_name == 'push' %}
-            🚀 ${{ github.actor }} pushed commits to branch `${{ github.ref_name }}`
-            🔗 Commit: ${{ github.event.head_commit.url }}
-            {% endif %}
-
-            {% if github.event_name == 'pull_request' %}
-            🔀 ${{ github.actor }} has requested a pull request
-            📌 Title: ${{ github.event.pull_request.title }}
-            🔗 URL: ${{ github.event.pull_request.html_url }}
-            {% endif %}
-
-  # Email notification for approved pull requests
-  email_on_approval:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
-    steps:
-      - name: Send Email
+      # --- Send Email if PR Approved ---
+      - name: Send Email on PR Approval
+        if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
         uses: dawidd6/action-send-mail@v3
         with:
-          server_address: smtp.gmail.com
-          server_port: 587
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          secure: true   # STARTTLS
-          subject: "✅ PR #${{ github.event.pull_request.number }} approved by ${{ github.event.review.user.login }}"
-          from: "GitHub Actions <${{ secrets.SMTP_USERNAME }}>"
-          to: "sainarne835@gmail.com"
+          subject: "✅ PR Approved in -calculator-app"
+          to: sainarne835@gmail.com
+          from: ${{ secrets.EMAIL_FROM }}
           body: |
-            ✅ Pull Request Approved
+            Pull Request Approved ✅
 
-            Repository: ${{ github.repository }}
-            PR: #${{ github.event.pull_request.number }} — "${{ github.event.pull_request.title }}"
-            Approved by: ${{ github.event.review.user.login }}
-            When: ${{ github.event.review.submitted_at }}
-            Link: ${{ github.event.pull_request.html_url }}
+            Repo: ${{ github.repository }}
+            Approved By: ${{ github.actor }}
+            PR Title: ${{ github.event.pull_request.title }}
+            PR URL: ${{ github.event.pull_request.html_url }}
 
-            Reviewer comment:
-            ${{ github.event.review.body }}
