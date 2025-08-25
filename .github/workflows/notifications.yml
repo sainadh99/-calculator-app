@@ -1,55 +1,50 @@
-name: Slack & Email Notifications
+name: Slack + Email Notifications
 
 on:
   push:
-    branches:
-      - main
+    branches: [ master ]
   pull_request:
-    types: [opened, synchronize, reopened, closed, review_requested, review_request_removed, ready_for_review]
+    branches: [ master ]
+    types: [opened, closed, reopened]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
-  notify:
+  slack-notify:
     runs-on: ubuntu-latest
-
+    if: github.event_name != 'pull_request_review'
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-
-      # --- Slack Notification for Push or Pull Request ---
-      - name: Notify Slack on Push/PR
-        if: github.event_name == 'push' || github.event_name == 'pull_request'
-        uses: slackapi/slack-github-action@v1.24.0
+      - name: Notify Slack
+        uses: rtCamp/action-slack-notify@v2
         with:
-          payload: |
-            {
-              "text": "📢 GitHub Event in *-calculator-app* repo:\n
-              *Event:* ${{ github.event_name }}\n
-              *Actor:* ${{ github.actor }}\n
-              *Branch:* ${{ github.ref_name }}\n
-              *Repo:* ${{ github.repository }}\n
-              *PR Title:* ${{ github.event.pull_request.title || '' }}\n
-              *URL:* ${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          message: |
+            Event: ${{ github.event_name }}
+            Repo: ${{ github.repository }}
+            Actor: ${{ github.actor }}
+            PR Title: ${{ github.event.pull_request.title || 'N/A' }}
+            PR URL: ${{ github.event.pull_request.html_url || 'N/A' }}
 
-      # --- Send Email if PR Approved ---
-      - name: Send Email on PR Approval
-        if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+  email-on-approval:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+    steps:
+      - name: Send Approval Email
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: ${{ secrets.SMTP_PORT }}
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "✅ PR Approved in -calculator-app"
-          to: sainarne835@gmail.com
-          from: ${{ secrets.EMAIL_FROM }}
+          subject: Pull Request Approved ✅
           body: |
-            Pull Request Approved ✅
+            Hello,
 
-            Repo: ${{ github.repository }}
-            Approved By: ${{ github.actor }}
-            PR Title: ${{ github.event.pull_request.title }}
+            Your pull request titled "${{ github.event.pull_request.title }}" in repo ${{ github.repository }} has been approved by ${{ github.event.review.user.login }}.
+
             PR URL: ${{ github.event.pull_request.html_url }}
 
+            Regards,
+            GitHub Actions
+          to: ${{ secrets.EMAIL_TO }}
+          from: ${{ secrets.EMAIL_FROM }}
