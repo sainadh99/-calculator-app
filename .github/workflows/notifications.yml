@@ -30,7 +30,7 @@ jobs:
 
   email-on-approval:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+    if: github.event.review.state == 'approved'
     steps:
       - name: Send Approval Email
         uses: dawidd6/action-send-mail@v3
