@@ -17,9 +17,8 @@ jobs:
       - name: Notify Slack
         uses: slackapi/slack-github-action@v1.26.0
         with:
-          # Use your Slack Incoming Webhook stored as secret
-          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK }}
-          text: |
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          slack-message: |
             *Event:* ${{ github.event_name }}
             *Repo:* ${{ github.repository }}
             *Actor:* ${{ github.actor }}
