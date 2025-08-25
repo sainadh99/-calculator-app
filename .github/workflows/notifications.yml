@@ -16,11 +16,17 @@ jobs:
       - name: Notify Slack
         uses: slackapi/slack-github-action@v1.26.0
         with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
-          payload: |
-            {
-              "text": "*GitHub Event Notification*\n*Event:* `${{ github.event_name }}`\n*Repository:* `<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>`\n*Actor:* `${{ github.actor }}`\n*Pull Request:* `${{ github.event.pull_request.title || 'N/A' }}`\n*PR Link:* `<${{ github.event.pull_request.html_url || '' }}|View PR>`"
-            }
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          channel: '#github-integration'
+          slack-message: |
+            *GitHub Event Notification*
+            *Event:* `${{ github.event_name }}`
+            *Repository:* `<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>`
+            *Actor:* `${{ github.actor }}`
+            *Branch:* `${{ github.ref_name }}`
+            *Commit:* `<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.event.head_commit.message || 'View Commit' }}>`
+            *Pull Request:* `${{ github.event.pull_request.title || 'N/A' }}`
+            *PR Link:* `<${{ github.event.pull_request.html_url || '' }}|View PR>`
 
   email-on-approval:
     runs-on: ubuntu-latest
@@ -39,9 +45,14 @@ jobs:
             
             Your pull request titled "${{ github.event.pull_request.title }}" in repository ${{ github.repository }} has been approved by ${{ github.event.review.user.login }}.
             
+            Repository: ${{ github.repository }}
+            PR Title: ${{ github.event.pull_request.title }}
+            Approved by: ${{ github.event.review.user.login }}
             PR Link: ${{ github.event.pull_request.html_url }}
             
+            Review Comment: ${{ github.event.review.body || 'No comment provided' }}
+            
             Regards,
-            GitHub Actions
+            GitHub Actions Bot
           to: ${{ secrets.EMAIL_TO }}
           from: ${{ secrets.EMAIL_FROM }}
