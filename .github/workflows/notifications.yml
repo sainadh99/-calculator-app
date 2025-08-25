@@ -1,5 +1,5 @@
 name: Slack + Email Notifications
-
+ 
 on:
   push:
     branches: [ master ]
@@ -8,7 +8,7 @@ on:
     types: [opened, closed, reopened]
   pull_request_review:
     types: [submitted]
-
+ 
 jobs:
   slack-notify:
     runs-on: ubuntu-latest
@@ -24,7 +24,7 @@ jobs:
             Actor: ${{ github.actor }}
             PR Title: ${{ github.event.pull_request.title || 'N/A' }}
             PR URL: ${{ github.event.pull_request.html_url || 'N/A' }}
-
+ 
   email-on-approval:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
@@ -39,11 +39,11 @@ jobs:
           subject: Pull Request Approved ✅
           body: |
             Hello,
-
+ 
             Your pull request titled "${{ github.event.pull_request.title }}" in repo ${{ github.repository }} has been approved by ${{ github.event.review.user.login }}.
-
+ 
             PR URL: ${{ github.event.pull_request.html_url }}
-
+ 
             Regards,
             GitHub Actions
           to: ${{ secrets.EMAIL_TO }}
