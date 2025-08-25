@@ -1,54 +1,89 @@
 name: Slack + Email Notifications
-
+ 
 on:
+
   push:
+
     branches: [ master ]
+
   pull_request:
+
     branches: [ master ]
+
     types: [opened, closed, reopened]
+
   pull_request_review:
+
     types: [submitted]
-
+ 
 jobs:
+
   slack-notify:
+
     runs-on: ubuntu-latest
+
     if: github.event_name != 'pull_request_review'
+
     steps:
+
       - name: Notify Slack
+
         uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-        with:
-          SLACK_CHANNEL: github-integration
-          SLACK_USERNAME: GitHub Actions
-          SLACK_TITLE: "GitHub Event Notification"
-          SLACK_MESSAGE: |
-            *Event:* ${{ github.event_name }}
-            *Repository:* ${{ github.repository }}
-            *Actor:* ${{ github.actor }}
-            ${{ github.event.pull_request.title && '*Pull Request:* ' + github.event.pull_request.title || '' }}
-            ${{ github.event.pull_request.html_url && '*PR Link:* <' + github.event.pull_request.html_url + '|View PR>' || '' }}
 
+        with:
+
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+          message: |
+
+            Event: ${{ github.event_name }}
+
+            Repo: ${{ github.repository }}
+
+            Actor: ${{ github.actor }}
+
+            PR Title: ${{ github.event.pull_request.title || 'N/A' }}
+
+            PR URL: ${{ github.event.pull_request.html_url || 'N/A' }}
+ 
   email-on-approval:
+
     runs-on: ubuntu-latest
+
     if: github.event_name == 'pull_request_review' && github.event.review.state == 'approved'
+
     steps:
+
       - name: Send Approval Email
+
         uses: dawidd6/action-send-mail@v3
+
         with:
+
           server_address: ${{ secrets.SMTP_SERVER }}
+
           server_port: ${{ secrets.SMTP_PORT }}
+
           username: ${{ secrets.SMTP_USERNAME }}
+
           password: ${{ secrets.SMTP_PASSWORD }}
+
           subject: Pull Request Approved ✅
+
           body: |
+
             Hello,
-
-            Your pull request titled "${{ github.event.pull_request.title }}" in repository ${{ github.repository }} has been approved by ${{ github.event.review.user.login }}.
-
-            PR Link: ${{ github.event.pull_request.html_url }}
-
+ 
+            Your pull request titled "${{ github.event.pull_request.title }}" in repo ${{ github.repository }} has been approved by ${{ github.event.review.user.login }}.
+ 
+            PR URL: ${{ github.event.pull_request.html_url }}
+ 
             Regards,
+
             GitHub Actions
+
           to: ${{ secrets.EMAIL_TO }}
+
           from: ${{ secrets.EMAIL_FROM }}
+
+ 
