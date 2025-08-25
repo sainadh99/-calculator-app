@@ -16,14 +16,6 @@ jobs:
     steps:
       - name: Notify Slack
         uses: rtCamp/action-slack-notify@v2
-        with:
-          # Slack webhook is picked automatically from the secret SLACK_WEBHOOK
-          args: |
-            Event: ${{ github.event_name }}
-            Repo: ${{ github.repository }}
-            Actor: ${{ github.actor }}
-            PR Title: ${{ github.event.pull_request.title || 'N/A' }}
-            PR URL: ${{ github.event.pull_request.html_url || 'N/A' }}
 
   email-on-approval:
     runs-on: ubuntu-latest
