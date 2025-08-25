@@ -1,5 +1,4 @@
 name: Slack + Email Notifications
-
 on:
   push:
     branches: [ master ]
@@ -17,14 +16,11 @@ jobs:
       - name: Notify Slack
         uses: slackapi/slack-github-action@v1.26.0
         with:
-          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK }}
-          slack-message: |
-            *GitHub Event Notification*
-            *Event:* `${{ github.event_name }}`
-            *Repository:* `<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>`
-            *Actor:* `${{ github.actor }}`
-            *Pull Request:* `${{ github.event.pull_request.title || 'N/A' }}`
-            *PR Link:* `<${{ github.event.pull_request.html_url || '' }}|View PR>`
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          payload: |
+            {
+              "text": "*GitHub Event Notification*\n*Event:* `${{ github.event_name }}`\n*Repository:* `<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>`\n*Actor:* `${{ github.actor }}`\n*Pull Request:* `${{ github.event.pull_request.title || 'N/A' }}`\n*PR Link:* `<${{ github.event.pull_request.html_url || '' }}|View PR>`"
+            }
 
   email-on-approval:
     runs-on: ubuntu-latest
@@ -40,11 +36,11 @@ jobs:
           subject: Pull Request Approved ✅
           body: |
             Hello,
-
+            
             Your pull request titled "${{ github.event.pull_request.title }}" in repository ${{ github.repository }} has been approved by ${{ github.event.review.user.login }}.
-
+            
             PR Link: ${{ github.event.pull_request.html_url }}
-
+            
             Regards,
             GitHub Actions
           to: ${{ secrets.EMAIL_TO }}
