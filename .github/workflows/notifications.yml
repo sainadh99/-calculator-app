@@ -15,12 +15,10 @@ jobs:
     if: github.event_name != 'pull_request_review'
     steps:
       - name: Notify Slack
-        uses: slackapi/slack-github-action@v1.26.0
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        uses: slack/notify-action@v1.2.1
         with:
-          slack-message: |
-            *Channel:* #github-integration
+          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+          message: |
             *Event:* ${{ github.event_name }}
             *Repository:* ${{ github.repository }}
             *Actor:* ${{ github.actor }}
