@@ -12,7 +12,7 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Slack: push by sainadh45372
+      - name: Slack notification for push by sainadh45372
         if: ${{ github.event_name == 'push' && github.event.sender.login == 'sainadh45372' }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -21,7 +21,7 @@ jobs:
             "${{ github.actor }}" "${{ github.repository }}" "${{ github.ref_name }}" "${{ github.event.compare }}")
           curl -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
 
-      - name: Slack: PR opened by sainadh45372
+      - name: Slack notification for PR opened by sainadh45372
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'opened' && github.event.pull_request.user.login == 'sainadh45372' }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -34,7 +34,7 @@ jobs:
             "${{ github.event.pull_request.html_url }}")
           curl -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
 
-      - name: Email when PR approved by sainadh99
+      - name: Email notification when PR approved by sainadh99
         if: ${{ github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.review.user.login == 'sainadh99' }}
         uses: dawidd6/action-send-mail@v3
         with:
