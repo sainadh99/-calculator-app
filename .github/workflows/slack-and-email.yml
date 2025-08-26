@@ -43,7 +43,7 @@ jobs:
         with:
           server_address: smtp.gmail.com
           server_port: 587
-          secure: false
+          secure: true
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: "PR #${{ github.event.pull_request.number }} approved by ${{ github.event.review.user.login }}"
