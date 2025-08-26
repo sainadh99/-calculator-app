@@ -12,6 +12,7 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
+      # 1️⃣ Slack notification for push by sainadh45372
       - name: Slack notification for push by sainadh45372
         if: ${{ github.event_name == 'push' && github.event.sender.login == 'sainadh45372' }}
         env:
@@ -21,6 +22,7 @@ jobs:
             "${{ github.actor }}" "${{ github.repository }}" "${{ github.ref_name }}" "${{ github.event.compare }}")
           curl -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
 
+      # 2️⃣ Slack notification for PR opened by sainadh45372
       - name: Slack notification for PR opened by sainadh45372
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'opened' && github.event.pull_request.user.login == 'sainadh45372' }}
         env:
@@ -34,8 +36,9 @@ jobs:
             "${{ github.event.pull_request.html_url }}")
           curl -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
 
-      - name: Email notification when PR approved by sainadh99
-        if: ${{ github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.review.user.login == 'sainadh99' }}
+      # 3️⃣ Email notification when PR approved by sainadh99
+      - name: Email notification to sainadhnarne9999@gmail.com
+        if: ${{ github.event_name == 'pull_request_review' && github.event.review.state == 'approved' && github.event.review.user.login == 'sainadh99' && github.event.pull_request.user.login == 'sainadh45372' }}
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -44,10 +47,11 @@ jobs:
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: "PR #${{ github.event.pull_request.number }} approved by ${{ github.event.review.user.login }}"
-          to: ${{ secrets.EMAIL_TO }}
+          to: sainadhnarne9999@gmail.com
           from: ${{ secrets.EMAIL_FROM }}
           body: |
             Repository: ${{ github.repository }}
             Title: ${{ github.event.pull_request.title }}
             URL: ${{ github.event.pull_request.html_url }}
             Approved by: ${{ github.event.review.user.login }}
+
