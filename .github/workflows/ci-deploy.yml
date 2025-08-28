@@ -3,11 +3,15 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - master   # Trigger pipeline only on push to master
+      - master        # Trigger on any push to master
+  pull_request:
+    types: [closed]   # Trigger when a PR is closed (merged or not)
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
   build-and-deploy:
+    # Only run if it's a push to master OR a merged PR
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     
     steps:
@@ -87,6 +91,7 @@ jobs:
           command_timeout: 15m
           script: |
             echo "=== Starting deployment ==="
+            echo "Trigger: ${{ github.event_name }}"
             
             # Start Docker service if not running
             echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker || true
@@ -178,3 +183,19 @@ jobs:
           echo "🔍 Container status shows deployment was successful!"
           # Don't exit with error since deployment actually worked
           exit 0
+          
+      # Step 8: Deployment notification
+      - name: Deployment Success Notification
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "📊 Deployment Summary:"
+          echo "  • Trigger: ${{ github.event_name }}"
+          echo "  • Repository: ${{ github.repository }}"
+          echo "  • Branch: ${{ github.ref_name }}"
+          echo "  • Commit: ${{ github.sha }}"
+          echo "  • Actor: ${{ github.actor }}"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "  • PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+            echo "  • PR Author: ${{ github.event.pull_request.user.login }}"
+          fi
+          echo "  • App URL: http://${{ secrets.AZURE_VM_HOST }}"
