@@ -3,26 +3,23 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - master   # Runs only when you push or merge to master
+      - master   # Trigger pipeline only on push to master
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 0: Checkout code from your repo
+      # Step 0: Checkout code
       - name: Checkout code
         uses: actions/checkout@v3
-        with:
-          repository: sainadh99/-calculator-app.git
-          ref: master
 
-      # Step 1: Login to DockerHub using PAT
+      # Step 1: Login to DockerHub
       - name: Log in to DockerHub
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}   # DockerHub username
-          password: ${{ secrets.DOCKERHUB_TOKEN }}      # DockerHub Personal Access Token
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Step 2: Build & push Docker image
       - name: Build and Push Docker Image
@@ -35,13 +32,10 @@ jobs:
       - name: Deploy to Azure VM
         uses: appleboy/ssh-action@v0.1.10
         with:
-          host: 52.146.16.201                   # Azure VM public IP
-          username: azureuser                   # Azure VM username
-          key: ${{ secrets.AZURE_VM_KEY }}      # SSH private key content stored as secret
+          host: 52.146.16.201
+          username: azureuser
+          key: ${{ secrets.AZURE_VM_KEY }}
           script: |
-            echo "Logging in to DockerHub on VM..."
-            docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
-
             echo "Pulling latest Docker image..."
             docker pull sainadh99/calculator-app:latest
 
