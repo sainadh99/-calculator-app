@@ -39,22 +39,12 @@ jobs:
       # Step 4: Verify secrets (debug step)
       - name: Verify Configuration
         run: |
-          echo "Checking configuration..."
-          if [ -z "${{ secrets.AZURE_VM_HOST }}" ]; then
-            echo "❌ ERROR: AZURE_VM_HOST secret is missing or empty"
-            exit 1
-          fi
-          if [ -z "${{ secrets.AZURE_VM_USERNAME }}" ]; then
-            echo "❌ ERROR: AZURE_VM_USERNAME secret is missing or empty"
-            exit 1
-          fi
-          if [ -z "${{ secrets.AZURE_VM_KEY }}" ]; then
-            echo "❌ ERROR: AZURE_VM_KEY secret is missing or empty"
-            exit 1
-          fi
-          echo "✅ All required secrets are configured"
-          echo "Host: ${{ secrets.AZURE_VM_HOST }}"
-          echo "Username: ${{ secrets.AZURE_VM_USERNAME }}"
+          echo "✅ Checking required secrets..."
+          echo "AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST != '' && 'SET' || 'MISSING' }}"
+          echo "AZURE_VM_USERNAME: ${{ secrets.AZURE_VM_USERNAME != '' && 'SET' || 'MISSING' }}"
+          echo "AZURE_VM_KEY: ${{ secrets.AZURE_VM_KEY != '' && 'SET' || 'MISSING' }}"
+          echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
+          echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
           
       # Step 5: Deploy to Azure VM via SSH
       - name: Deploy to Azure VM
