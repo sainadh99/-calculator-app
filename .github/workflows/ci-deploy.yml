@@ -36,7 +36,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           
-      # Step 4: Deploy to Azure VM via SSH
+      # Step 4: Verify secrets (debug step)
+      - name: Verify Configuration
+        run: |
+          echo "Checking configuration..."
+          if [ -z "${{ secrets.AZURE_VM_HOST }}" ]; then
+            echo "❌ ERROR: AZURE_VM_HOST secret is missing or empty"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AZURE_VM_USERNAME }}" ]; then
+            echo "❌ ERROR: AZURE_VM_USERNAME secret is missing or empty"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AZURE_VM_KEY }}" ]; then
+            echo "❌ ERROR: AZURE_VM_KEY secret is missing or empty"
+            exit 1
+          fi
+          echo "✅ All required secrets are configured"
+          echo "Host: ${{ secrets.AZURE_VM_HOST }}"
+          echo "Username: ${{ secrets.AZURE_VM_USERNAME }}"
+          
+      # Step 5: Deploy to Azure VM via SSH
       - name: Deploy to Azure VM
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -92,7 +112,7 @@ jobs:
             
             echo "=== Deployment completed ==="
 
-      # Step 5: Health check (optional)
+      # Step 6: Health check (optional)
       - name: Health Check
         run: |
           echo "Waiting for application to be ready..."
