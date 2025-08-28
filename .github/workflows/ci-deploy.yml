@@ -42,17 +42,17 @@ jobs:
           echo "✅ Checking required secrets..."
           echo "AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST != '' && 'SET' || 'MISSING' }}"
           echo "AZURE_VM_USERNAME: ${{ secrets.AZURE_VM_USERNAME != '' && 'SET' || 'MISSING' }}"
-          echo "AZURE_VM_KEY: ${{ secrets.AZURE_VM_KEY != '' && 'SET' || 'MISSING' }}"
+          echo "AZURE_VM_PASSWORD: ${{ secrets.AZURE_VM_PASSWORD != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
           
-      # Step 5: Deploy to Azure VM via SSH
+      # Step 5: Deploy to Azure VM via SSH (Using Password)
       - name: Deploy to Azure VM
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.AZURE_VM_HOST }}
           username: ${{ secrets.AZURE_VM_USERNAME }}
-          key: ${{ secrets.AZURE_VM_KEY }}
+          password: ${{ secrets.AZURE_VM_PASSWORD }}
           port: 22
           timeout: 60s
           command_timeout: 15m
