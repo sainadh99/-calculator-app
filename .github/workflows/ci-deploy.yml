@@ -10,11 +10,6 @@ on:
 
 jobs:
   build-and-deploy:
-    # Conditions:
-    # 1. Run on push to master
-    # 2. OR Run when PR is merged into master
-    #    - PR must be created by "sainadh45372"
-    #    - PR must be merged by "sainadh99"
     if: |
       github.event_name == 'push' ||
       (
@@ -42,13 +37,17 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Step 4: Build and push Docker image to DockerHub
+      # Step 4: Build and push Docker image with build number
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
-          context: .                # Build from current repo
-          push: true                # Push image to DockerHub
-          tags: sainadh99/calculator-app:latest
+          context: .
+          push: true
+          tags: |
+            sainadh99/calculator-app:latest
+            sainadh99/calculator-app:build-${{ github.run_number }}
+      - name: Show Build Info
+        run: echo "✅ Built and pushed Docker image: sainadh99/calculator-app:build-${{ github.run_number }}"
 
       # Step 5: Connect to Azure VM and install Docker (if not installed)
       - name: Setup Docker on Azure VM
@@ -74,25 +73,25 @@ jobs:
           username: ${{ secrets.AZURE_VM_USERNAME }}
           password: ${{ secrets.AZURE_VM_PASSWORD }}
           script: |
-            echo "Pulling latest image..."
-            docker pull sainadh99/calculator-app:latest
+            echo "🚀 Deploying Build #${{ github.run_number }} on Azure VM"
+            docker pull sainadh99/calculator-app:build-${{ github.run_number }}
 
             echo "Stopping old container (if any)..."
             docker stop calculator-app || true
             docker rm calculator-app || true
 
             echo "Running new container..."
-            docker run -d --name calculator-app --restart unless-stopped -p 80:80 sainadh99/calculator-app:latest
+            docker run -d --name calculator-app --restart unless-stopped -p 80:80 sainadh99/calculator-app:build-${{ github.run_number }}
 
       # Step 7: Quick health check
       - name: Health Check
         run: |
-          echo "Checking if app is running..."
+          echo "🔍 Checking if Build #${{ github.run_number }} is running..."
           sleep 10
-          curl -f http://${{ secrets.AZURE_VM_HOST }} || echo "⚠️ App might be up, but health check failed. Check manually."
+          curl -f http://${{ secrets.AZURE_VM_HOST }} || echo "⚠️ Build #${{ github.run_number }} might be up, but health check failed. Check manually."
 
       # Step 8: Final message in logs
       - name: Deployment Success
         run: |
-          echo "🎉 Deployment completed!"
+          echo "🎉 Deployment of Build #${{ github.run_number }} completed!"
           echo "Application is available at: http://${{ secrets.AZURE_VM_HOST }}"
