@@ -1,15 +1,18 @@
 name: CI/CD Pipeline
-
+ 
 on:
   push:
     branches:
-      - master           # Run when code is pushed directly to master
+      - master           # Run on push to master
   pull_request:
-    types: [closed]      # Run when a PR is closed (merged or not)
-  workflow_dispatch:      # Allow manual run from GitHub Actions tab
-
+    types: [closed]      # Run when PR is closed (merged or not)
+  workflow_dispatch:      # Allow manual run
+ 
 jobs:
   build-and-deploy:
+    # ✅ Conditions:
+    # 1. Push directly to master
+    # 2. OR merged PR into master AND author is sainadh45372 AND merger is sainadh99
     if: |
       github.event_name == 'push' ||
       (
@@ -20,24 +23,41 @@ jobs:
         github.actor == 'sainadh99'
       )
     runs-on: ubuntu-latest
-
+ 
     steps:
-      # Step 1: Get the code from GitHub
+      # Step 0: Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
+ 
+      # Step 0.1: Generate Build Number
+      - name: Generate Build Number
+        id: build_number
+        run: |
+          BUILD_NUMBER=${{ github.run_number }}
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "🔢 Build Number: $BUILD_NUMBER"
+ 
+      # Step 1: Generate Build Number
+      - name: Generate Build Number
+        id: build_number
+        run: |
+          BUILD_NUMBER=${{ github.run_number }}
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+          echo "🔢 Build Number: $BUILD_NUMBER"
 
-      # Step 2: Prepare Docker for building images
+      # Step 2: Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      # Step 3: Login to DockerHub using secrets
+ 
+      # Step 3: Login to DockerHub
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # Step 4: Build and push Docker image with build number
+ 
+      # Step 3: Build & push Docker image with build number
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
@@ -45,53 +65,142 @@ jobs:
           push: true
           tags: |
             sainadh99/calculator-app:latest
-            sainadh99/calculator-app:build-${{ github.run_number }}
-      - name: Show Build Info
-        run: echo "✅ Built and pushed Docker image: sainadh99/calculator-app:build-${{ github.run_number }}"
-
-      # Step 5: Connect to Azure VM and install Docker (if not installed)
+            sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}
+            sainadh99/calculator-app:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.title=Calculator App
+            org.opencontainers.image.version=build-${{ env.BUILD_NUMBER }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            build.number=${{ env.BUILD_NUMBER }}
+            build.url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+ 
+      # Step 5: Verify secrets and build info
+      - name: Verify Configuration
+        run: |
+          echo "✅ Checking required secrets..."
+          echo "AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST != '' && 'SET' || 'MISSING' }}"
+          echo "AZURE_VM_USERNAME: ${{ secrets.AZURE_VM_USERNAME != '' && 'SET' || 'MISSING' }}"
+          echo "AZURE_VM_PASSWORD: ${{ secrets.AZURE_VM_PASSWORD != '' && 'SET' || 'MISSING' }}"
+          echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
+          echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
+          echo ""
+          echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
+          echo ""
+          echo "🔢 Build Information:"
+          echo "Build Number: ${{ env.BUILD_NUMBER }}"
+          echo "Git SHA: ${{ github.sha }}"
+          echo "Docker Tags: sainadh99/calculator-app:latest, sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}"
+ 
+      # Step 6: Install Docker on VM (if needed)
       - name: Setup Docker on Azure VM
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.AZURE_VM_HOST }}
           username: ${{ secrets.AZURE_VM_USERNAME }}
           password: ${{ secrets.AZURE_VM_PASSWORD }}
+          port: 22
+          timeout: 300s
+          command_timeout: 10m
           script: |
+            echo "=== Checking Docker installation ==="
             if ! command -v docker &> /dev/null; then
-              echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S apt update
-              echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S apt install -y docker.io
-              echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker
-              echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl enable docker
+                echo "Installing Docker..."
+                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S apt update
+                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S apt install -y docker.io
+                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker
+                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl enable docker
+                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S usermod -aG docker $USER
+            else
+                echo "Docker is already installed"
+                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker || true
             fi
-            docker --version
-
-      # Step 6: Deploy the container on Azure VM
+            docker --version || echo "⚠️ Docker command not available"
+ 
+      # Step 7: Deploy to Azure VM with build number
       - name: Deploy to Azure VM
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.AZURE_VM_HOST }}
           username: ${{ secrets.AZURE_VM_USERNAME }}
           password: ${{ secrets.AZURE_VM_PASSWORD }}
+          port: 22
+          timeout: 60s
+          command_timeout: 15m
           script: |
-            echo "🚀 Deploying Build #${{ github.run_number }} on Azure VM"
-            docker pull sainadh99/calculator-app:build-${{ github.run_number }}
-
-            echo "Stopping old container (if any)..."
-            docker stop calculator-app || true
-            docker rm calculator-app || true
-
-            echo "Running new container..."
-            docker run -d --name calculator-app --restart unless-stopped -p 80:80 sainadh99/calculator-app:build-${{ github.run_number }}
-
-      # Step 7: Quick health check
+            echo "=== Starting deployment - Build #${{ env.BUILD_NUMBER }} ==="
+            echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker || true
+            sleep 5
+ 
+            if docker info >/dev/null 2>&1; then
+                DOCKER_CMD="docker"
+            elif echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S docker info >/dev/null 2>&1; then
+                DOCKER_CMD="echo '${{ secrets.AZURE_VM_PASSWORD }}' | sudo -S docker"
+            else
+                echo "❌ Docker is not accessible"
+                exit 1
+            fi
+ 
+            echo "🔄 Pulling latest image (Build #${{ env.BUILD_NUMBER }})..."
+            eval "$DOCKER_CMD pull sainadh99/calculator-app:latest"
+            
+            echo "🛑 Stopping existing container..."
+            eval "$DOCKER_CMD stop calculator-app" 2>/dev/null || true
+            eval "$DOCKER_CMD rm calculator-app" 2>/dev/null || true
+            
+            echo "🧹 Cleaning up old images..."
+            eval "$DOCKER_CMD image prune -f"
+            
+            echo "🚀 Starting new container with Build #${{ env.BUILD_NUMBER }}..."
+            eval "$DOCKER_CMD run -d --name calculator-app --restart unless-stopped -p 80:80 \
+              --label 'build.number=${{ env.BUILD_NUMBER }}' \
+              --label 'build.sha=${{ github.sha }}' \
+              --label 'build.url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+              sainadh99/calculator-app:latest"
+ 
+            sleep 5
+            if eval "$DOCKER_CMD ps" | grep calculator-app; then
+                echo "✅ Deployment successful - Build #${{ env.BUILD_NUMBER }}!"
+                echo "📋 Container Info:"
+                eval "$DOCKER_CMD inspect calculator-app --format='Build Number: {{index .Config.Labels \"build.number\"}}'"
+                eval "$DOCKER_CMD inspect calculator-app --format='Git SHA: {{index .Config.Labels \"build.sha\"}}'"
+            else
+                echo "❌ Deployment failed!"
+                eval "$DOCKER_CMD logs calculator-app"
+                exit 1
+            fi
+ 
+      # Step 8: Health check
       - name: Health Check
         run: |
-          echo "🔍 Checking if Build #${{ github.run_number }} is running..."
-          sleep 10
-          curl -f http://${{ secrets.AZURE_VM_HOST }} || echo "⚠️ Build #${{ github.run_number }} might be up, but health check failed. Check manually."
-
-      # Step 8: Final message in logs
-      - name: Deployment Success
+          echo "Waiting for app..."
+          sleep 20
+          for url in "http://${{ secrets.AZURE_VM_HOST }}" "http://${{ secrets.AZURE_VM_HOST }}:80"; do
+            if curl -fs "$url" >/dev/null; then
+              echo "✅ App is running at $url"
+              exit 0
+            fi
+          done
+          echo "⚠️ App might be running but health check failed. Please verify manually."
+ 
+      # Step 9: Deployment notification with build info
+      - name: Deployment Success Notification
         run: |
-          echo "🎉 Deployment of Build #${{ github.run_number }} completed!"
-          echo "Application is available at: http://${{ secrets.AZURE_VM_HOST }}"
+          echo "🎉 Deployment completed successfully!"
+          echo "📊 Summary:"
+          echo "  • Build Number: #${{ env.BUILD_NUMBER }}"
+          echo "  • Trigger: ${{ github.event_name }}"
+          echo "  • Branch: ${{ github.ref_name }}"
+          echo "  • Commit: ${{ github.sha }}"
+          echo "  • Actor: ${{ github.actor }}"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "  • PR #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
+          fi
+          echo "  • App URL: http://${{ secrets.AZURE_VM_HOST }}"
+          echo "  • Docker Tags:"
+          echo "    - sainadh99/calculator-app:latest"
+          echo "    - sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}"
+          echo "    - sainadh99/calculator-app:${{ github.sha }}"
+          echo "  • Build URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
