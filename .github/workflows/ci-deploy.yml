@@ -12,8 +12,8 @@ jobs:
   build-and-deploy:
     # ✅ Conditions:
     # 1. Push directly to master
-    # 2. OR merged PR into master AND merger is sainadh99 (PR can be by anyone)
-    # 3. OR code changes in PR (opened/synchronized)
+    # 2. OR merged PR into master AND merger is sainadh99 (PR can be by ANYONE)
+    # 3. OR code changes in PR (opened/synchronized) - for testing Docker builds from ANY user
     if: |
       github.event_name == 'push' ||
       (
