@@ -1,54 +1,54 @@
 name: CI/CD Pipeline
- 
+
+# Triggers: When to run the workflow
 on:
   push:
     branches:
-      - master           # Run on push to master
+      - master       # Run workflow on direct push to master
   pull_request:
-    types: [closed]      # Run when PR is closed (merged or not)
-  workflow_dispatch:      # Allow manual run
- 
+    types: [closed]  # Run workflow when a PR is closed (merged or not)
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+
 jobs:
   build-and-deploy:
-    # ✅ Conditions:
+    # Conditions to run this job
     # 1. Push directly to master
-    # 2. OR merged PR into master AND author is sainadh45372 AND merger is sainadh99
+    # 2. OR a PR merged into master by user 'sainadh99'
     if: |
       github.event_name == 'push' ||
       (
         github.event_name == 'pull_request' &&
         github.event.pull_request.merged == true &&
         github.base_ref == 'master' &&
-        github.event.pull_request.user.login == 'sainadh45372' &&
         github.actor == 'sainadh99'
       )
     runs-on: ubuntu-latest
- 
+
     steps:
-      # Step 0: Checkout code
+      # Step 0: Get the code from the repository
       - name: Checkout code
         uses: actions/checkout@v4
- 
-      # Step 1: Generate Build Number
+
+      # Step 1: Generate a build number using GitHub run number
       - name: Generate Build Number
         id: build_number
         run: |
           BUILD_NUMBER=${{ github.run_number }}
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "🔢 Build Number: $BUILD_NUMBER"
- 
-      # Step 2: Set up Docker Buildx
+
+      # Step 2: Prepare Docker Buildx (for building multi-platform images)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
- 
+
       # Step 3: Login to DockerHub
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
- 
-      # Step 4: Build & push Docker image
+
+      # Step 4: Build and push Docker image
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
@@ -59,8 +59,8 @@ jobs:
             sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
- 
-      # Step 5: Verify secrets
+
+      # Step 5: Verify required secrets are available
       - name: Verify Configuration
         run: |
           echo "✅ Checking required secrets..."
@@ -69,10 +69,9 @@ jobs:
           echo "AZURE_VM_PASSWORD: ${{ secrets.AZURE_VM_PASSWORD != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
-          echo ""
           echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
- 
-      # Step 6: Install Docker on VM (if needed)
+
+      # Step 6: Install Docker on the Azure VM (if not installed)
       - name: Setup Docker on Azure VM
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -96,8 +95,8 @@ jobs:
                 echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker || true
             fi
             docker --version || echo "⚠️ Docker command not available"
- 
-      # Step 7: Deploy to Azure VM
+
+      # Step 7: Deploy Docker image to Azure VM
       - name: Deploy to Azure VM
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -111,7 +110,8 @@ jobs:
             echo "=== Starting deployment - Build #${{ env.BUILD_NUMBER }} ==="
             echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker || true
             sleep 5
- 
+
+            # Choose Docker command
             if docker info >/dev/null 2>&1; then
                 DOCKER_CMD="docker"
             elif echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S docker info >/dev/null 2>&1; then
@@ -120,13 +120,14 @@ jobs:
                 echo "❌ Docker is not accessible"
                 exit 1
             fi
- 
+
+            # Pull latest image and restart container
             eval "$DOCKER_CMD pull sainadh99/calculator-app:latest"
             eval "$DOCKER_CMD stop calculator-app" 2>/dev/null || true
             eval "$DOCKER_CMD rm calculator-app" 2>/dev/null || true
             eval "$DOCKER_CMD image prune -f"
             eval "$DOCKER_CMD run -d --name calculator-app --restart unless-stopped -p 80:80 sainadh99/calculator-app:latest"
- 
+
             sleep 5
             if eval "$DOCKER_CMD ps" | grep calculator-app; then
                 echo "✅ Deployment successful - Build #${{ env.BUILD_NUMBER }}!"
@@ -135,8 +136,8 @@ jobs:
                 eval "$DOCKER_CMD logs calculator-app"
                 exit 1
             fi
- 
-      # Step 8: Health check
+
+      # Step 8: Check if the app is running
       - name: Health Check
         run: |
           echo "Waiting for app..."
@@ -148,8 +149,8 @@ jobs:
             fi
           done
           echo "⚠️ App might be running but health check failed. Please verify manually."
- 
-      # Step 9: Deployment notification
+
+      # Step 9: Notify that deployment succeeded
       - name: Deployment Success Notification
         run: |
           echo "🎉 Deployment completed successfully!"
