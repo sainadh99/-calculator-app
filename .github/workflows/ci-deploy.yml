@@ -1,19 +1,15 @@
 name: CI/CD Pipeline
- 
+
 on:
   push:
     branches:
-      - master           # Run on push to master
+      - master
   pull_request:
-    types: [closed]      # Run when PR is closed (merged or not)
-  workflow_dispatch:      # Allow manual run
- 
+    types: [closed]
+  workflow_dispatch:
+
 jobs:
   build-and-deploy:
-    # ✅ Conditions:
-    # 1. Push directly to master
-    # 2. OR merged PR into master AND merger is sainadh99 (PR can be by ANYONE)
-    # 3. OR code changes in PR (opened/synchronized) - for testing Docker builds from ANY user
     if: |
       github.event_name == 'push' ||
       (
@@ -27,12 +23,12 @@ jobs:
         (github.event.action == 'opened' || github.event.action == 'synchronize')
       )
     runs-on: ubuntu-latest
- 
+
     steps:
       # Step 0: Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
- 
+
       # Step 1: Generate Build Number
       - name: Generate Build Number
         id: build_number
@@ -40,18 +36,18 @@ jobs:
           BUILD_NUMBER=${{ github.run_number }}
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "🔢 Build Number: $BUILD_NUMBER"
- 
+
       # Step 2: Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
- 
+
       # Step 3: Login to DockerHub
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
- 
+
       # Step 4: Build & push Docker image
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
@@ -63,26 +59,32 @@ jobs:
             sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
- 
+
       # Step 5: Verify secrets
       - name: Verify Configuration
         run: |
           echo "✅ Checking required secrets..."
-          echo "AZURE_VM_HOST: ${{ secrets.AZURE_VM_HOST != '' && 'SET' || 'MISSING' }}"
-          echo "AZURE_VM_USERNAME: ${{ secrets.AZURE_VM_USERNAME != '' && 'SET' || 'MISSING' }}"
-          echo "AZURE_VM_PASSWORD: ${{ secrets.AZURE_VM_PASSWORD != '' && 'SET' || 'MISSING' }}"
+          echo "GCP_VM_HOST: ${{ secrets.GCP_VM_HOST != '' && 'SET' || 'MISSING' }}"
+          echo "GCP_VM_USERNAME: ${{ secrets.GCP_VM_USERNAME != '' && 'SET' || 'MISSING' }}"
+          echo "GCP_VM_KEY: ${{ secrets.GCP_VM_KEY != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
           echo ""
           echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
- 
-      # Step 6: Install Docker on VM (if needed)
-      - name: Setup Docker on Azure VM
+
+      # Step 6: Setup SSH key for GCP VM
+      - name: Setup SSH key
+        run: |
+          echo "${{ secrets.GCP_VM_KEY }}" > gcp_key
+          chmod 600 gcp_key
+
+      # Step 7: Install Docker on GCP VM (if needed)
+      - name: Setup Docker on GCP VM
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.AZURE_VM_HOST }}
-          username: ${{ secrets.AZURE_VM_USERNAME }}
-          password: ${{ secrets.AZURE_VM_PASSWORD }}
+          host: ${{ secrets.GCP_VM_HOST }}
+          username: ${{ secrets.GCP_VM_USERNAME }}
+          key: ${{ secrets.GCP_VM_KEY }}
           port: 22
           timeout: 300s
           command_timeout: 10m
@@ -90,47 +92,47 @@ jobs:
             echo "=== Checking Docker installation ==="
             if ! command -v docker &> /dev/null; then
                 echo "Installing Docker..."
-                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S apt update
-                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S apt install -y docker.io
-                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker
-                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl enable docker
-                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S usermod -aG docker $USER
+                sudo apt update
+                sudo apt install -y docker.io
+                sudo systemctl start docker
+                sudo systemctl enable docker
+                sudo usermod -aG docker $USER
             else
                 echo "Docker is already installed"
-                echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker || true
+                sudo systemctl start docker || true
             fi
             docker --version || echo "⚠️ Docker command not available"
- 
-      # Step 7: Deploy to Azure VM
-      - name: Deploy to Azure VM
+
+      # Step 8: Deploy to GCP VM
+      - name: Deploy to GCP VM
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.AZURE_VM_HOST }}
-          username: ${{ secrets.AZURE_VM_USERNAME }}
-          password: ${{ secrets.AZURE_VM_PASSWORD }}
+          host: ${{ secrets.GCP_VM_HOST }}
+          username: ${{ secrets.GCP_VM_USERNAME }}
+          key: ${{ secrets.GCP_VM_KEY }}
           port: 22
           timeout: 60s
           command_timeout: 15m
           script: |
             echo "=== Starting deployment - Build #${{ env.BUILD_NUMBER }} ==="
-            echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S systemctl start docker || true
+            sudo systemctl start docker || true
             sleep 5
- 
+
             if docker info >/dev/null 2>&1; then
                 DOCKER_CMD="docker"
-            elif echo "${{ secrets.AZURE_VM_PASSWORD }}" | sudo -S docker info >/dev/null 2>&1; then
-                DOCKER_CMD="echo '${{ secrets.AZURE_VM_PASSWORD }}' | sudo -S docker"
+            elif sudo docker info >/dev/null 2>&1; then
+                DOCKER_CMD="sudo docker"
             else
                 echo "❌ Docker is not accessible"
                 exit 1
             fi
- 
+
             eval "$DOCKER_CMD pull sainadh99/calculator-app:latest"
             eval "$DOCKER_CMD stop calculator-app" 2>/dev/null || true
             eval "$DOCKER_CMD rm calculator-app" 2>/dev/null || true
             eval "$DOCKER_CMD image prune -f"
             eval "$DOCKER_CMD run -d --name calculator-app --restart unless-stopped -p 80:80 sainadh99/calculator-app:latest"
- 
+
             sleep 5
             if eval "$DOCKER_CMD ps" | grep calculator-app; then
                 echo "✅ Deployment successful - Build #${{ env.BUILD_NUMBER }}!"
@@ -139,21 +141,21 @@ jobs:
                 eval "$DOCKER_CMD logs calculator-app"
                 exit 1
             fi
- 
-      # Step 8: Health check
+
+      # Step 9: Health check
       - name: Health Check
         run: |
           echo "Waiting for app..."
           sleep 20
-          for url in "http://${{ secrets.AZURE_VM_HOST }}" "http://${{ secrets.AZURE_VM_HOST }}:80"; do
+          for url in "http://${{ secrets.GCP_VM_HOST }}" "http://${{ secrets.GCP_VM_HOST }}:80"; do
             if curl -fs "$url" >/dev/null; then
               echo "✅ App is running at $url"
               exit 0
             fi
           done
           echo "⚠️ App might be running but health check failed. Please verify manually."
- 
-      # Step 9: Deployment notification
+
+      # Step 10: Deployment notification
       - name: Deployment Success Notification
         run: |
           echo "🎉 Deployment completed successfully!"
@@ -166,4 +168,4 @@ jobs:
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             echo "  • PR #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
           fi
-          echo "  • App URL: http://${{ secrets.AZURE_VM_HOST }}"
+          echo "  • App URL: http://${{ secrets.GCP_VM_HOST }}"
