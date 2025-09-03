@@ -5,23 +5,27 @@ on:
     branches:
       - master
   pull_request:
-    types: [closed]
+    types: [opened, synchronize, closed]
   workflow_dispatch:
 
 jobs:
   build-and-deploy:
     if: |
-      github.event_name == 'push' ||
       (
-        github.event_name == 'pull_request' &&
-        github.event.pull_request.merged == true &&
-        github.base_ref == 'master' &&
-        github.actor == 'sainadh99'
-      ) ||
+        github.event_name == 'push' && 
+        github.ref == 'refs/heads/master' && 
+        !contains(github.event.head_commit.message, 'Merge pull request')
+      ) || 
       (
-        github.event_name == 'pull_request' &&
+        github.event_name == 'pull_request' && 
+        github.event.pull_request.merged == true && 
+        github.base_ref == 'master'
+      ) || 
+      (
+        github.event_name == 'pull_request' && 
         (github.event.action == 'opened' || github.event.action == 'synchronize')
-      )
+      ) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
@@ -71,6 +75,8 @@ jobs:
           echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
           echo ""
           echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "👤 Actor: ${{ github.actor }}"
 
       # Step 6: Setup SSH key for GCP VM
       - name: Setup SSH key
@@ -91,15 +97,15 @@ jobs:
           script: |
             echo "=== Checking Docker installation ==="
             if ! command -v docker &> /dev/null; then
-                echo "Installing Docker..."
-                sudo apt update
-                sudo apt install -y docker.io
-                sudo systemctl start docker
-                sudo systemctl enable docker
-                sudo usermod -aG docker $USER
+              echo "Installing Docker..."
+              sudo apt update
+              sudo apt install -y docker.io
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo usermod -aG docker $USER
             else
-                echo "Docker is already installed"
-                sudo systemctl start docker || true
+              echo "Docker is already installed"
+              sudo systemctl start docker || true
             fi
             docker --version || echo "⚠️ Docker command not available"
 
@@ -117,29 +123,29 @@ jobs:
             echo "=== Starting deployment - Build #${{ env.BUILD_NUMBER }} ==="
             sudo systemctl start docker || true
             sleep 5
-
+            
             if docker info >/dev/null 2>&1; then
-                DOCKER_CMD="docker"
+              DOCKER_CMD="docker"
             elif sudo docker info >/dev/null 2>&1; then
-                DOCKER_CMD="sudo docker"
+              DOCKER_CMD="sudo docker"
             else
-                echo "❌ Docker is not accessible"
-                exit 1
+              echo "❌ Docker is not accessible"
+              exit 1
             fi
-
+            
             eval "$DOCKER_CMD pull sainadh99/calculator-app:latest"
             eval "$DOCKER_CMD stop calculator-app" 2>/dev/null || true
             eval "$DOCKER_CMD rm calculator-app" 2>/dev/null || true
             eval "$DOCKER_CMD image prune -f"
             eval "$DOCKER_CMD run -d --name calculator-app --restart unless-stopped -p 80:80 sainadh99/calculator-app:latest"
-
+            
             sleep 5
             if eval "$DOCKER_CMD ps" | grep calculator-app; then
-                echo "✅ Deployment successful - Build #${{ env.BUILD_NUMBER }}!"
+              echo "✅ Deployment successful - Build #${{ env.BUILD_NUMBER }}!"
             else
-                echo "❌ Deployment failed!"
-                eval "$DOCKER_CMD logs calculator-app"
-                exit 1
+              echo "❌ Deployment failed!"
+              eval "$DOCKER_CMD logs calculator-app"
+              exit 1
             fi
 
       # Step 9: Health check
