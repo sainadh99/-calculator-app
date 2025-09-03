@@ -161,7 +161,7 @@ jobs:
           done
           echo "⚠️ App might be running but health check failed. Please verify manually."
 
-      # Step 10: Deployment notification
+      # Step 11: Deployment notification
       - name: Deployment Success Notification
         run: |
           echo "🎉 Deployment completed successfully!"
