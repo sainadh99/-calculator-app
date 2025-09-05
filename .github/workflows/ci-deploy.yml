@@ -133,7 +133,7 @@ jobs:
           format: spdx-json
           output-file: sbom.spdx.json
 
-      # Step 10: Push Docker image after security checks pass
+      # Step 12: Push Docker image after security checks pass
       - name: Push Docker Image
         uses: docker/build-push-action@v5
         with:
