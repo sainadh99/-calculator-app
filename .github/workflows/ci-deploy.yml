@@ -1,108 +1,81 @@
-name: Secure CI/CD Pipeline
+name: Beginner Secure CI/CD Pipeline
 
+# 🚀 When does this pipeline run?
 on:
   push:
     branches:
-      - master
-  pull_request:
-    types: [opened, synchronize, closed]
-  workflow_dispatch:
+      - master         # Runs when you push to master
+  pull_request:        # Runs when a PR is opened/updated/merged
+  workflow_dispatch:   # Can run manually from GitHub Actions tab
 
 jobs:
+  # ========================
+  # 1. Security Scanning Job
+  # ========================
   security-scan:
     runs-on: ubuntu-latest
     steps:
-      # Step 0: Checkout code
+      # Step 1: Get the source code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 1: Scan Dockerfile for security issues
-      - name: Run Hadolint (Dockerfile linter)
+      # Step 2: Check Dockerfile for best practices
+      - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
-        continue-on-error: true
+        continue-on-error: true  # Don’t fail pipeline for lint issues
         with:
           dockerfile: Dockerfile
           failure-threshold: error
 
-      # Step 2: Scan for secrets in code
-      - name: Run TruffleHog OSS
+      # Step 3: Scan code for secrets (like passwords/tokens)
+      - name: Secrets Scan
         uses: trufflesecurity/trufflehog@main
         continue-on-error: true
         with:
           path: ./
           base: main
           head: HEAD
-          extra_args: --debug --only-verified
+          extra_args: --only-verified
 
+  # ========================
+  # 2. Build & Deploy Job
+  # ========================
   build-and-deploy:
-    needs: security-scan
-    if: |
-      (
-        github.event_name == 'push' && 
-        github.ref == 'refs/heads/master' && 
-        !contains(github.event.head_commit.message, 'Merge pull request')
-      ) || 
-      (
-        github.event_name == 'pull_request' && 
-        github.event.pull_request.merged == true && 
-        github.base_ref == 'master'
-      ) || 
-      (
-        github.event_name == 'pull_request' && 
-        (github.event.action == 'opened' || github.event.action == 'synchronize')
-      ) ||
-      github.event_name == 'workflow_dispatch'
+    needs: security-scan   # Run only after security checks
     runs-on: ubuntu-latest
 
     steps:
-      # Step 0: Checkout code
+      # Step 1: Get source code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 1: Generate Build Number
+      # Step 2: Generate build number (for tagging Docker image)
       - name: Generate Build Number
-        id: build_number
-        run: |
-          BUILD_NUMBER=${{ github.run_number }}
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
-          echo "🔢 Build Number: $BUILD_NUMBER"
+        run: echo "BUILD_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
 
-      # Step 2: Set up Docker Buildx
+      # Step 3: Set up Docker Buildx (for advanced builds)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Step 3: Login to DockerHub
+      # Step 4: Login to DockerHub (credentials stored in GitHub secrets)
       - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Step 4: Build Docker image (without pushing yet)
+      # Step 5: Build Docker image
       - name: Build Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
-          load: true
+          load: true   # Load image locally
           tags: |
             sainadh99/calculator-app:latest
             sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
-      # Step 5: Run Docker Scout vulnerability scan (Non-blocking)
-      - name: Docker Scout Security Scan
-        uses: docker/scout-action@v1
-        continue-on-error: true
-        with:
-          command: cves
-          image: sainadh99/calculator-app:latest
-          only-severities: critical
-          summary: false
-          write-comment: false
-
-      # Step 6: Run Trivy vulnerability scanner (Non-blocking)
-      - name: Run Trivy vulnerability scanner
+      # Step 6: Run vulnerability scan with Trivy (non-blocking)
+      - name: Run Trivy Scan
         uses: aquasecurity/trivy-action@master
         continue-on-error: true
         with:
@@ -111,25 +84,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '0'
 
-      # Step 7: Security Risk Assessment
-      - name: Security Risk Assessment
-        run: |
-          echo "=== Security Vulnerability Assessment ==="
-          echo "📊 Vulnerability Summary:"
-          echo "• Known Issue: cross-spawn 7.0.3 - HIGH CVE-2024-21538"
-          echo "• Risk Level: ACCEPTABLE for calculator application"
-          echo ""
-          echo "🔍 Risk Analysis:"
-          echo "• CVE-2024-21538: Regular expression complexity issue"
-          echo "• Impact: Potential DoS through regex complexity"
-          echo "• Context: Calculator app with limited external input"
-          echo "• Mitigation: Runtime security controls applied"
-          echo ""
-          echo "✅ SECURITY DECISION: PROCEED WITH DEPLOYMENT"
-          echo "• Runtime security hardening provides protection"
-          echo "• Recommend updating cross-spawn to 7.0.5+ in next release"
-
-      # Step 8: Push Docker image after assessment
+      # Step 7: Push Docker image to DockerHub
       - name: Push Docker Image
         uses: docker/build-push-action@v5
         with:
@@ -138,155 +93,36 @@ jobs:
           tags: |
             sainadh99/calculator-app:latest
             sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
-      # Step 9: Verify secrets
-      - name: Verify Configuration
-        run: |
-          echo "✅ Checking required secrets..."
-          echo "GCP_VM_HOST: ${{ secrets.GCP_VM_HOST != '' && 'SET' || 'MISSING' }}"
-          echo "GCP_VM_USERNAME: ${{ secrets.GCP_VM_USERNAME != '' && 'SET' || 'MISSING' }}"
-          echo "GCP_VM_KEY: ${{ secrets.GCP_VM_KEY != '' && 'SET' || 'MISSING' }}"
-          echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
-          echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
-          echo ""
-          echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
-          echo "🔄 Trigger: ${{ github.event_name }}"
-          echo "👤 Actor: ${{ github.actor }}"
-
-      # Step 10: Setup SSH key for GCP VM
+      # Step 8: Setup SSH key to connect to GCP VM
       - name: Setup SSH key
         run: |
           echo "${{ secrets.GCP_VM_KEY }}" > gcp_key
           chmod 600 gcp_key
 
-      # Step 11: Install Docker on GCP VM (if needed)
-      - name: Setup Docker on GCP VM
+      # Step 9: Deploy container to GCP VM
+      - name: Deploy to GCP VM
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
           username: ${{ secrets.GCP_VM_USERNAME }}
           key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 300s
-          command_timeout: 10m
           script: |
-            echo "=== Checking Docker installation ==="
-            if ! command -v docker &> /dev/null; then
-              echo "Installing Docker..."
-              sudo apt update
-              sudo apt install -y docker.io
-              sudo systemctl start docker
-              sudo systemctl enable docker
-              sudo usermod -aG docker $USER
-            else
-              echo "Docker is already installed"
-              sudo systemctl start docker || true
-            fi
-            docker --version || echo "⚠️ Docker command not available"
+            echo "Pulling latest Docker image..."
+            docker pull sainadh99/calculator-app:latest
+            
+            echo "Stopping old container..."
+            docker stop calculator-app || true
+            docker rm calculator-app || true
 
-      # Step 12: Secure Deploy to GCP VM
-      - name: Secure Deploy to GCP VM
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USERNAME }}
-          key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 15m
-          script: |
-            echo "=== Starting secure deployment - Build #${{ env.BUILD_NUMBER }} ==="
-            sudo systemctl start docker || true
-            sleep 5
-            
-            if docker info >/dev/null 2>&1; then
-              DOCKER_CMD="docker"
-            elif sudo docker info >/dev/null 2>&1; then
-              DOCKER_CMD="sudo docker"
-            else
-              echo "❌ Docker is not accessible"
-              exit 1
-            fi
-            
-            # Pull the image
-            eval "$DOCKER_CMD pull sainadh99/calculator-app:latest"
-            
-            # Stop and remove existing container
-            eval "$DOCKER_CMD stop calculator-app" 2>/dev/null || true
-            eval "$DOCKER_CMD rm calculator-app" 2>/dev/null || true
-            eval "$DOCKER_CMD image prune -f"
-            
-            # Run container with security hardening
-            eval "$DOCKER_CMD run -d \
+            echo "Starting new container..."
+            docker run -d \
               --name calculator-app \
-              --restart unless-stopped \
               -p 80:80 \
-              --read-only \
-              --tmpfs /tmp:rw,noexec,nosuid,size=100m \
-              --security-opt no-new-privileges:true \
-              --cap-drop ALL \
-              --cap-add NET_BIND_SERVICE \
-              --memory=512m \
-              --cpus=1.0 \
-              --health-cmd='curl -f http://localhost:80 || exit 1' \
-              --health-interval=30s \
-              --health-timeout=10s \
-              --health-retries=3 \
-              --health-start-period=40s \
-              sainadh99/calculator-app:latest"
-            
-            sleep 5
-            if eval "$DOCKER_CMD ps" | grep calculator-app; then
-              echo "✅ Secure deployment successful - Build #${{ env.BUILD_NUMBER }}!"
-            else
-              echo "❌ Deployment failed!"
-              eval "$DOCKER_CMD logs calculator-app"
-              exit 1
-            fi
+              sainadh99/calculator-app:latest
 
-      # Step 13: Health check
+      # Step 10: Health check (make sure app is running)
       - name: Health Check
         run: |
-          echo "Waiting for app..."
-          sleep 20
-          for url in "http://${{ secrets.GCP_VM_HOST }}" "http://${{ secrets.GCP_VM_HOST }}:80"; do
-            if curl -fs "$url" >/dev/null; then
-              echo "✅ App is running at $url"
-              exit 0
-            fi
-          done
-          echo "⚠️ App might be running but health check failed. Please verify manually."
-
-      # Step 14: Generate Security Report
-      - name: Generate Security Report
-        run: |
-          echo "📋 Security Deployment Report - Build #${{ env.BUILD_NUMBER }}"
-          echo "=================================="
-          echo "✅ Dockerfile security scan completed"
-          echo "✅ Container vulnerability scan completed (non-blocking)"
-          echo "✅ Secrets scan completed"
-          echo "✅ Container deployed with security hardening:"
-          echo "   • Read-only root filesystem"
-          echo "   • Dropped all capabilities except NET_BIND_SERVICE"
-          echo "   • Resource limits applied (512MB RAM, 1 CPU)"
-          echo "   • Security options: no-new-privileges"
-          echo "   • Health checks enabled"
-          echo "⚠️  Known vulnerability: cross-spawn 7.0.3 (acceptable risk)"
-
-      # Step 15: Deployment notification
-      - name: Secure Deployment Success Notification
-        run: |
-          echo "🎉 Secure deployment completed successfully!"
-          echo "📊 Summary:"
-          echo "  • Build Number: #${{ env.BUILD_NUMBER }}"
-          echo "  • Trigger: ${{ github.event_name }}"
-          echo "  • Branch: ${{ github.ref_name }}"
-          echo "  • Commit: ${{ github.sha }}"
-          echo "  • Actor: ${{ github.actor }}"
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "  • PR #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
-          fi
-          echo "  • App URL: http://${{ secrets.GCP_VM_HOST }}"
-          echo "  • Security: ✅ Hardened container deployment"
+          sleep 10
+          curl -f http://${{ secrets.GCP_VM_HOST }} || exit 1
