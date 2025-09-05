@@ -8,7 +8,7 @@ RUN npm install --only=production
 
 COPY . .
 
-# Create data directory
+
 RUN mkdir -p /usr/src/app/data
 
 EXPOSE 3000
