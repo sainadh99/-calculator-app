@@ -227,8 +227,13 @@ jobs:
           echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
           echo "📅 Build Date: ${{ env.BUILD_DATE }}"
           echo "🌐 URL: http://${{ secrets.GCP_VM_HOST }}"
-          echo "👤 Deployed by: ${{ github.event.pull_request.merged_by.login }}"
-          echo "📝 PR: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "👤 Deployed by: ${{ github.event.pull_request.merged_by.login }}"
+            echo "📝 PR: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}"
+          else
+            echo "👤 Deployed by: ${{ github.actor }}"
+            echo "📝 Trigger: GitHub Actions workflow update"
+          fi
           echo "🔗 Commit: ${{ github.sha }}"
           echo ""
           echo "🔒 SECURITY FEATURES ENABLED:"
