@@ -6,7 +6,6 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  DOCKER_CONTENT_TRUST: 1  # Only for local build & push
 
 jobs:
   deploy:
@@ -80,40 +79,69 @@ jobs:
           command_timeout: 25m
           script: |
             export HOME=/home/${{ secrets.GCP_VM_USERNAME }}
-            export DOCKER_CONTENT_TRUST=0
+            
+            # Determine Docker command
             DOCKER_CMD="docker"
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
-
-            # Copy seccomp profile
+            
+            # Create seccomp profile directory
             mkdir -p $HOME/docker-seccomp
+            
+            # Create enhanced seccomp profile
             cat << 'EOF' > $HOME/docker-seccomp/seccomp.json
             {
               "defaultAction": "SCMP_ACT_ERRNO",
+              "architectures": ["SCMP_ARCH_X86_64"],
               "syscalls": [
-                { "names": ["accept","accept4","access","alarm","bind","brk"], "action": "SCMP_ACT_ALLOW" }
+                {
+                  "names": [
+                    "accept", "accept4", "access", "alarm", "arch_prctl", "bind", "brk",
+                    "chdir", "chmod", "chown", "clock_getres", "clock_gettime", "clock_nanosleep",
+                    "clone", "close", "connect", "dup", "dup2", "epoll_create", "epoll_ctl",
+                    "epoll_pwait", "epoll_wait", "eventfd2", "execve", "exit", "exit_group",
+                    "fchdir", "fchmod", "fchown", "fcntl", "fdatasync", "flock", "fork",
+                    "fstat", "fsync", "ftruncate", "futex", "getcwd", "getdents", "getegid",
+                    "geteuid", "getgid", "getpid", "getppid", "getrandom", "getrlimit",
+                    "getsid", "getsockname", "getsockopt", "gettid", "gettimeofday", "getuid",
+                    "inotify_add_watch", "inotify_init1", "ioctl", "kill", "listen", "lseek",
+                    "lstat", "madvise", "mkdir", "mmap", "mprotect", "munmap", "nanosleep",
+                    "newfstatat", "open", "openat", "pipe", "pipe2", "poll", "prctl", "pread64",
+                    "prlimit64", "pwrite64", "read", "readlink", "readlinkat", "recvfrom",
+                    "recvmsg", "rename", "renameat", "rt_sigaction", "rt_sigprocmask",
+                    "rt_sigreturn", "sched_getaffinity", "sched_yield", "select", "sendfile",
+                    "sendmsg", "sendto", "setgid", "setgroups", "setrlimit", "setsid",
+                    "setsockopt", "setuid", "shutdown", "sigaltstack", "socket", "stat",
+                    "statfs", "symlink", "symlinkat", "sync", "sysinfo", "tgkill", "time",
+                    "times", "truncate", "umask", "uname", "unlink", "unlinkat", "utime",
+                    "utimes", "vfork", "wait4", "waitpid", "write"
+                  ],
+                  "action": "SCMP_ACT_ALLOW"
+                }
               ]
             }
             EOF
-
-            # Stop & remove previous container
-            $DOCKER_CMD stop calculator-app || true
-            $DOCKER_CMD rm calculator-app || true
-
-            # Pull latest image
-            $DOCKER_CMD --disable-content-trust pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
-
-            # Create volume & restricted network
+            
+            # Stop and remove previous container
+            $DOCKER_CMD stop calculator-app 2>/dev/null || true
+            $DOCKER_CMD rm calculator-app 2>/dev/null || true
+            
+            # Pull latest image (disable content trust for pulling)
+            DOCKER_CONTENT_TRUST=0 $DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
+            
+            # Create volume if it doesn't exist
             $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1 || $DOCKER_CMD volume create calc-data
+            
+            # Create network if it doesn't exist
             $DOCKER_CMD network inspect calc-network >/dev/null 2>&1 || \
               $DOCKER_CMD network create --driver bridge \
               --opt com.docker.network.bridge.name=calc-br \
               --opt com.docker.network.bridge.enable_icc=false \
               --opt com.docker.network.bridge.enable_ip_masquerade=true \
               calc-network
-
-            # Run container securely
+            
+            # Run container with enhanced security
             $DOCKER_CMD run -d --name calculator-app --restart unless-stopped \
               --network calc-network \
               -p 80:3000 \
@@ -147,23 +175,40 @@ jobs:
               --log-opt max-file=3 \
               -v calc-data:/usr/src/app/data:rw \
               sainadh99/calculator-app:${{ env.BUILD_TAG }}
+            
+            # Wait for container to start
+            sleep 10
+            
+            # Verify container is running
+            if ! $DOCKER_CMD ps | grep -q calculator-app; then
+              echo "❌ Container failed to start"
+              $DOCKER_CMD logs calculator-app
+              exit 1
+            fi
 
       # ---------------------------
       # 7️⃣ Health Check
       # ---------------------------
       - name: Health Check
         run: |
+          echo "🔍 Starting health check..."
           HEALTH_CHECK_PASSED=false
-          for i in {1..10}; do
-            if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
+          for i in {1..12}; do
+            echo "Health check attempt $i/12..."
+            if curl -fs --max-time 10 --connect-timeout 5 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null 2>&1; then
+              echo "✅ Health check passed!"
               HEALTH_CHECK_PASSED=true
               break
             fi
+            echo "⏳ Waiting 15 seconds before retry..."
             sleep 15
           done
+          
           if [ "$HEALTH_CHECK_PASSED" = false ]; then
-            echo "❌ Container health check failed!"
+            echo "❌ Container health check failed after 12 attempts!"
+            echo "🔍 Attempting to get container logs..."
             exit 1
+          fi
 
       # ---------------------------
       # 8️⃣ Container Maintenance
@@ -182,10 +227,19 @@ jobs:
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
+            
+            echo "🧹 Cleaning up old containers..."
             $DOCKER_CMD container prune -f
-            OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +3 | awk '{print $1}')
-            if [ -n "$OLD_IMAGES" ]; then echo "$OLD_IMAGES" | xargs -r $DOCKER_CMD rmi || true; fi
+            
+            echo "🧹 Cleaning up old images..."
+            OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +4 | awk '{print $1}')
+            if [ -n "$OLD_IMAGES" ]; then 
+              echo "Removing old images: $OLD_IMAGES"
+              echo "$OLD_IMAGES" | xargs -r $DOCKER_CMD rmi --force || true
+            fi
+            
             $DOCKER_CMD image prune -f
+            echo "✅ Maintenance completed"
 
       # ---------------------------
       # 9️⃣ Deployment Success Notification
@@ -197,3 +251,4 @@ jobs:
           echo "📦 App: Calculator App (Hardened)"
           echo "🌐 URL: http://${{ secrets.GCP_VM_HOST }}"
           echo "🔒 Security: Non-root, read-only FS, seccomp, limited resources"
+          echo "⏰ Deployed at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
