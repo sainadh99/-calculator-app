@@ -77,12 +77,10 @@ jobs:
           key: ${{ secrets.GCP_VM_KEY }}
           port: 22
           timeout: 60s
-          command_timeout: 20m
+          command_timeout: 25m
           script: |
-            # Disable Docker Content Trust for remote
-            export DOCKER_CONTENT_TRUST=0
             export HOME=/home/${{ secrets.GCP_VM_USERNAME }}
-
+            export DOCKER_CONTENT_TRUST=0
             DOCKER_CMD="docker"
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
@@ -94,34 +92,28 @@ jobs:
             {
               "defaultAction": "SCMP_ACT_ERRNO",
               "syscalls": [
-                {
-                  "names": ["accept", "accept4", "access", "alarm", "bind", "brk"],
-                  "action": "SCMP_ACT_ALLOW"
-                }
+                { "names": ["accept","accept4","access","alarm","bind","brk"], "action": "SCMP_ACT_ALLOW" }
               ]
             }
             EOF
 
-            # Pull and stop previous container
-            $DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
+            # Stop & remove previous container
             $DOCKER_CMD stop calculator-app || true
             $DOCKER_CMD rm calculator-app || true
 
-            # Create persistent volume
-            if ! $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1; then
-              $DOCKER_CMD volume create calc-data
-            fi
+            # Pull latest image
+            $DOCKER_CMD --disable-content-trust pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
 
-            # Create restricted network
-            if ! $DOCKER_CMD network inspect calc-network >/dev/null 2>&1; then
+            # Create volume & restricted network
+            $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1 || $DOCKER_CMD volume create calc-data
+            $DOCKER_CMD network inspect calc-network >/dev/null 2>&1 || \
               $DOCKER_CMD network create --driver bridge \
-                --opt com.docker.network.bridge.name=calc-br \
-                --opt com.docker.network.bridge.enable_icc=false \
-                --opt com.docker.network.bridge.enable_ip_masquerade=true \
-                calc-network
-            fi
+              --opt com.docker.network.bridge.name=calc-br \
+              --opt com.docker.network.bridge.enable_icc=false \
+              --opt com.docker.network.bridge.enable_ip_masquerade=true \
+              calc-network
 
-            # Run secure container
+            # Run container securely
             $DOCKER_CMD run -d --name calculator-app --restart unless-stopped \
               --network calc-network \
               -p 80:3000 \
@@ -162,7 +154,7 @@ jobs:
       - name: Health Check
         run: |
           HEALTH_CHECK_PASSED=false
-          for i in {1..5}; do
+          for i in {1..10}; do
             if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
               HEALTH_CHECK_PASSED=true
               break
@@ -170,6 +162,7 @@ jobs:
             sleep 15
           done
           if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "❌ Container health check failed!"
             exit 1
 
       # ---------------------------
