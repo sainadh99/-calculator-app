@@ -1,55 +1,29 @@
 name: Secure CI/CD Pipeline
 
 on:
-  push:
-    branches:
-      - master
   pull_request:
-    types: [opened, synchronize, closed]
-  workflow_dispatch:
+    types: [closed]
 
 env:
   DOCKER_BUILDKIT: 1
 
 jobs:
-  ci-deploy:
+  deploy:
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')) ||
-      (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    # Only run when PR is merged by sainadh99
+    if: github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
 
     steps:
       # ---------------------------
-      # 1️⃣ Checkout code (Always runs)
+      # 1️⃣ Checkout code
       # ---------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
       # ---------------------------
-      # 2️⃣ PR CI Check (Only for PRs)
-      # ---------------------------
-      - name: PR CI Check
-        if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')
-        run: |
-          echo "🔹 PR #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
-          echo "🔍 Running CI checks..."
-          echo " - Checking code syntax"
-          echo " - Running linting (if configured)"
-          echo " - Running tests (if configured)"
-          echo " - Code quality checks completed"
-          echo "✅ CI checks completed successfully"
-          echo ""
-          echo "ℹ️ Deployment will only occur when merged by 'sainadh99' or pushed to master"
-
-      # ---------------------------
-      # 3️⃣ Generate Build Metadata (For deployments only)
+      # 2️⃣ Generate Build Metadata
       # ---------------------------
       - name: Generate Build Number & Metadata
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
         id: build_number
         run: |
           BUILD_NUMBER=${{ github.run_number }}
@@ -59,43 +33,30 @@ jobs:
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
           
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "🎯 Deployment authorized - PR merged by sainadh99"
-          else
-            echo "🎯 Deployment authorized - Direct push to master"
-          fi
+          echo "🎯 Deployment authorized - PR #${{ github.event.pull_request.number }} merged by sainadh99"
           echo "🔢 Build Number: $BUILD_NUMBER"
           echo "🏷️ Build Tag: $BUILD_TAG"
           echo "📅 Build Date: $BUILD_DATE"
 
       # ---------------------------
-      # 4️⃣ Set up Docker Buildx (For deployments only)
+      # 3️⃣ Set up Docker Buildx
       # ---------------------------
       - name: Set up Docker Buildx
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
         uses: docker/setup-buildx-action@v3
 
       # ---------------------------
-      # 5️⃣ Docker Login (For deployments only)
+      # 4️⃣ Docker Login
       # ---------------------------
       - name: Docker Login
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # ---------------------------
-      # 6️⃣ Build & Push Docker Image (For deployments only)
+      # 5️⃣ Build & Push Docker Image
       # ---------------------------
       - name: Build & Push Docker Image
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -111,60 +72,9 @@ jobs:
             GIT_COMMIT=${{ github.sha }}
 
       # ---------------------------
-      # 7️⃣ Verify Required Secrets (For deployments only)
-      # ---------------------------
-      - name: Verify Required Secrets
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
-        run: |
-          echo "✅ Checking required secrets..."
-          echo "GCP_VM_HOST: ${{ secrets.GCP_VM_HOST != '' && 'SET' || 'MISSING' }}"
-          echo "GCP_VM_USERNAME: ${{ secrets.GCP_VM_USERNAME != '' && 'SET' || 'MISSING' }}"
-          echo "GCP_VM_KEY: ${{ secrets.GCP_VM_KEY != '' && 'SET' || 'MISSING' }}"
-          echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
-          echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
-          echo ""
-          echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
-          echo "🏷️ Build Tag: ${{ env.BUILD_TAG }}"
-          echo "📅 Build Date: ${{ env.BUILD_DATE }}"
-
-      # ---------------------------
-      # 8️⃣ Setup Docker on GCP VM (For deployments only)
-      # ---------------------------
-      - name: Setup Docker on GCP VM
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USERNAME }}
-          key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 300s
-          command_timeout: 10m
-          script: |
-            if ! command -v docker &> /dev/null; then
-              echo "Installing Docker..."
-              sudo apt update
-              sudo apt install -y docker.io
-              sudo systemctl start docker
-              sudo systemctl enable docker
-              sudo usermod -aG docker $USER || true
-            else
-              echo "Docker already installed"
-              sudo systemctl start docker || true
-            fi
-            docker --version || echo "⚠️ Docker command not available"
-
-      # ---------------------------
-      # 9️⃣ Deploy Secure Container to GCP VM (For deployments only)
+      # 6️⃣ Deploy Secure Container to GCP VM
       # ---------------------------
       - name: Deploy Secure Container to GCP VM
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
@@ -186,7 +96,7 @@ jobs:
             $DOCKER_CMD stop calculator-app || true
             $DOCKER_CMD rm calculator-app || true
 
-            # Ensure persistent volume exists with restricted permissions
+            # Ensure persistent volume exists
             if ! $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1; then
               echo "📁 Creating persistent Docker volume: calc-data"
               $DOCKER_CMD volume create calc-data
@@ -240,108 +150,37 @@ jobs:
             echo "✅ Secure container deployed successfully"
 
       # ---------------------------
-      # 🔟 Enhanced Health Check (For deployments only)
+      # 7️⃣ Health Check
       # ---------------------------
-      - name: Enhanced Health Check
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+      - name: Health Check
         run: |
           HEALTH_CHECK_PASSED=false
-          echo "🏥 Starting comprehensive health checks for Calculator App..."
+          echo "🏥 Starting health checks for Calculator App..."
           
-          for i in {1..10}; do
-            echo "🔍 Health check attempt $i/10"
+          for i in {1..5}; do
+            echo "🔍 Health check attempt $i/5"
             
-            # Basic connectivity test
             if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
-              echo "✅ Basic connectivity: PASS"
-              
-              # Response time check
-              RESPONSE_TIME=$(curl -w "%{time_total}" -s -o /dev/null "http://${{ secrets.GCP_VM_HOST }}")
-              if [ $(echo "$RESPONSE_TIME < 2.0" | bc -l) -eq 1 ]; then
-                echo "⚡ Response time: ${RESPONSE_TIME}s (GOOD)"
-              else
-                echo "⚠️ Response time: ${RESPONSE_TIME}s (SLOW)"
-              fi
-              
+              echo "✅ App is running!"
               HEALTH_CHECK_PASSED=true
               break
             fi
             
-            if [ $i -lt 10 ]; then
+            if [ $i -lt 5 ]; then
               echo "⏳ Waiting 15 seconds before retry..."
               sleep 15
             fi
           done
 
-          if [ "$HEALTH_CHECK_PASSED" = true ]; then
-            echo "✅ All health checks passed!"
-          else
-            echo "❌ Health checks failed after 10 attempts."
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "❌ Health checks failed after 5 attempts."
             exit 1
           fi
 
       # ---------------------------
-      # 1️⃣1️⃣ Container Security Audit (For deployments only)
+      # 8️⃣ Container Maintenance
       # ---------------------------
-      - name: Container Security Audit
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USERNAME }}
-          key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 5m
-          script: |
-            DOCKER_CMD="docker"
-            if ! $DOCKER_CMD info >/dev/null 2>&1; then
-              DOCKER_CMD="sudo docker"
-            fi
-
-            echo "🔍 Running container security audit..."
-            
-            # Check container is running
-            if $DOCKER_CMD ps | grep calculator-app; then
-              echo "✅ Container is running"
-            else
-              echo "❌ Container is not running"
-              exit 1
-            fi
-            
-            # Check container capabilities
-            echo "🔒 Container capabilities:"
-            $DOCKER_CMD exec calculator-app capsh --print | grep Current || echo "Could not retrieve capabilities"
-            
-            # Check user context
-            echo "👤 Container user context:"
-            $DOCKER_CMD exec calculator-app id
-            
-            # Check filesystem permissions
-            echo "📁 Filesystem security:"
-            $DOCKER_CMD exec calculator-app ls -la / | head -5
-            
-            # Check process list
-            echo "🔄 Running processes:"
-            $DOCKER_CMD exec calculator-app ps aux
-            
-            # Check network connections
-            echo "🌐 Network connections:"
-            $DOCKER_CMD exec calculator-app netstat -tlnp 2>/dev/null | head -10 || echo "netstat not available"
-            
-            echo "✅ Security audit completed"
-
-      # ---------------------------
-      # 1️⃣2️⃣ Secure Container Maintenance (For deployments only)
-      # ---------------------------
-      - name: Secure Container Maintenance
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+      - name: Container Maintenance
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
@@ -356,12 +195,12 @@ jobs:
               DOCKER_CMD="sudo docker"
             fi
 
-            echo "🧹 Performing secure container maintenance..."
+            echo "🧹 Cleaning up old containers and images..."
             
-            # Remove stopped containers (excluding running ones)
+            # Remove stopped containers
             $DOCKER_CMD container prune -f
             
-            # Remove old calculator-app images (keep latest 2 versions for rollback)
+            # Remove old calculator-app images (keep latest 2 versions)
             OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +3 | awk '{print $1}')
             if [ -n "$OLD_IMAGES" ]; then
               echo "🗑️ Removing old images: $OLD_IMAGES"
@@ -371,72 +210,15 @@ jobs:
             # Remove dangling images
             $DOCKER_CMD image prune -f
             
-            # Remove unused networks (keep calc-network)
-            $DOCKER_CMD network prune -f
-            
-            # Clean up build cache
-            $DOCKER_CMD builder prune -f --keep-storage 1GB
-            
             # Preserve persistent volume calc-data
             echo "💾 Preserving persistent data volume: calc-data"
             
-            echo "✅ Secure maintenance completed"
-            echo "📊 Current disk usage:"
-            $DOCKER_CMD system df
+            echo "✅ Container maintenance completed"
 
       # ---------------------------
-      # 1️⃣3️⃣ Security Monitoring Setup
+      # 9️⃣ Deployment Success Notification
       # ---------------------------
-      - name: Setup Security Monitoring
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USERNAME }}
-          key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 5m
-          script: |
-            echo "🛡️ Setting up security monitoring..."
-            
-            # Create monitoring script
-            sudo tee /usr/local/bin/container-monitor.sh > /dev/null <<'EOF'
-            #!/bin/bash
-            DOCKER_CMD="docker"
-            if ! $DOCKER_CMD info >/dev/null 2>&1; then
-              DOCKER_CMD="sudo docker"
-            fi
-            
-            # Check if container is healthy
-            if ! $DOCKER_CMD ps --filter "name=calculator-app" --filter "health=healthy" | grep -q calculator-app; then
-              echo "$(date): WARNING - Calculator app container is not healthy" | logger -t container-monitor
-              # Could add notification logic here
-            fi
-            
-            # Check resource usage
-            MEMORY_USAGE=$($DOCKER_CMD stats calculator-app --no-stream --format "table {{.MemPerc}}" | tail -n 1 | sed 's/%//')
-            if [ "${MEMORY_USAGE%.*}" -gt 80 ]; then
-              echo "$(date): WARNING - High memory usage: ${MEMORY_USAGE}%" | logger -t container-monitor
-            fi
-            EOF
-            
-            sudo chmod +x /usr/local/bin/container-monitor.sh
-            
-            # Setup cron job for monitoring (every 5 minutes)
-            (crontab -l 2>/dev/null; echo "*/5 * * * * /usr/local/bin/container-monitor.sh") | crontab -
-            
-            echo "✅ Security monitoring configured"
-
-      # ---------------------------
-      # 1️⃣4️⃣ Deployment Success Notification (For deployments only)
-      # ---------------------------
-      - name: Secure Deployment Success Notification
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+      - name: Deployment Success Notification
         run: |
           echo "🎉 SECURE DEPLOYMENT SUCCESSFUL!"
           echo "════════════════════════════════════════"
@@ -445,39 +227,19 @@ jobs:
           echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
           echo "📅 Build Date: ${{ env.BUILD_DATE }}"
           echo "🌐 URL: http://${{ secrets.GCP_VM_HOST }}"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "👤 Deployed by: ${{ github.event.pull_request.merged_by.login }}"
-            echo "📝 PR: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}"
-          else
-            echo "👤 Deployed by: ${{ github.actor }}"
-            echo "📝 Trigger: Direct push to master"
-          fi
+          echo "👤 Deployed by: ${{ github.event.pull_request.merged_by.login }}"
+          echo "📝 PR: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}"
           echo "🔗 Commit: ${{ github.sha }}"
           echo ""
           echo "🔒 SECURITY FEATURES ENABLED:"
           echo "  ✅ Container running as non-root user (1001:1001)"
           echo "  ✅ Read-only root filesystem"
           echo "  ✅ All capabilities dropped except essential ones"
-          echo "  ✅ Security options: no-new-privileges, seccomp, apparmor"
           echo "  ✅ Resource limits: 256MB RAM, 0.5 CPU, 100 PIDs"
           echo "  ✅ Network isolation with custom bridge"
-          echo "  ✅ Security monitoring configured"
           echo "════════════════════════════════════════"
           echo ""
           echo "✅ All deployment stages completed successfully!"
           echo "🔍 Health checks passed"
-          echo "🛡️ Security audit completed"
           echo "🧹 Container maintenance completed"
           echo "💾 Persistent data preserved"
-          echo "📊 Monitoring configured"
-          echo ""
-          echo "Security monitoring:"
-          echo "- Container health checks every 30 seconds"
-          echo "- Resource monitoring every 5 minutes"
-          echo "- Logs retained for 30MB max"
-          echo ""
-          echo "Next steps:"
-          echo "- Monitor application at http://${{ secrets.GCP_VM_HOST }}"
-          echo "- Check logs: docker logs calculator-app"
-          echo "- View container status: docker ps"
-          echo "- Security audit: docker exec calculator-app id"
