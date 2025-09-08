@@ -10,7 +10,7 @@ jobs:
   ci-deploy:
     runs-on: ubuntu-latest  # Use GitHub's Ubuntu runner to execute jobs
     
-    # Conditional execution:
+    # This big `if` ensures:
     # - CI checks run for opened or updated PRs
     # - Deployment only happens if PR is merged by 'sainadh99'
     # - Manual workflow runs are allowed
@@ -31,6 +31,7 @@ jobs:
       # Step 0: Checkout the code
       - name: Checkout code
         uses: actions/checkout@v4
+        # This step pulls your repository code into the workflow runner
 
       # Step 1: Run CI checks for opened or updated PRs
       - name: PR CI Check
@@ -42,9 +43,10 @@ jobs:
           echo "   - Running linting (if configured)"
           echo "   - Running tests (if configured)"
           echo "✅ CI checks completed successfully"
+          echo ""
           echo "ℹ️ Deployment will only occur when merged by 'sainadh99'"
 
-      # Steps 2-10 run only if PR is merged by 'sainadh99'
+      # Steps below only run if PR is merged by 'sainadh99'
       # Step 2: Generate build number and metadata
       - name: Generate Build Number & Metadata
         if: |
@@ -54,9 +56,11 @@ jobs:
           github.event.pull_request.merged_by.login == 'sainadh99'
         id: build_number
         run: |
+          # Use GitHub's run number for versioning
           BUILD_NUMBER=${{ github.run_number }}
           BUILD_TAG="build-${BUILD_NUMBER}"
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          # Save variables for later steps
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
@@ -67,7 +71,7 @@ jobs:
           echo "👤 Merged by: ${{ github.event.pull_request.merged_by.login }}"
           echo "🔗 PR: #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
 
-      # Step 3: Setup Docker Buildx
+      # Step 3: Setup Docker Buildx for building multi-platform images
       - name: Set up Docker Buildx
         if: |
           github.event_name == 'pull_request' &&
@@ -76,7 +80,7 @@ jobs:
           github.event.pull_request.merged_by.login == 'sainadh99'
         uses: docker/setup-buildx-action@v3
 
-      # Step 4: DockerHub Login
+      # Step 4: Login to DockerHub
       - name: Docker Login
         if: |
           github.event_name == 'pull_request' &&
@@ -88,7 +92,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Step 5: Build & Push Docker Image
+      # Step 5: Build and push Docker image
       - name: Build & Push Docker Image
         if: |
           github.event_name == 'pull_request' &&
@@ -109,7 +113,7 @@ jobs:
             BUILD_DATE=${{ env.BUILD_DATE }}
             GIT_COMMIT=${{ github.sha }}
 
-      # Step 6: Verify required secrets
+      # Step 6: Verify secrets before deployment
       - name: Verify Required Secrets
         if: |
           github.event_name == 'pull_request' &&
@@ -123,6 +127,10 @@ jobs:
           echo "GCP_VM_KEY: ${{ secrets.GCP_VM_KEY != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
+          echo ""
+          echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
+          echo "🏷️ Build Tag: ${{ env.BUILD_TAG }}"
+          echo "📅 Build Date: ${{ env.BUILD_DATE }}"
 
       # Step 7: Setup Docker on GCP VM
       - name: Setup Docker on GCP VM
@@ -154,7 +162,7 @@ jobs:
             fi
             docker --version || echo "⚠️ Docker command not available"
 
-      # Step 8: Deploy Docker container
+      # Step 8: Deploy Docker container on GCP VM
       - name: Deploy to GCP VM
         if: |
           github.event_name == 'pull_request' &&
@@ -170,11 +178,33 @@ jobs:
           timeout: 60s
           command_timeout: 15m
           script: |
-            echo "📦 Pulling Docker image..."
-            sudo docker pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
-            sudo docker stop calculator-app || true
-            sudo docker rm calculator-app || true
-            sudo docker run -d \
+            echo "=== Starting deployment - Build #${{ env.BUILD_NUMBER }} ==="
+            echo "📦 Pulling Docker image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
+            
+            # Determine Docker command (with or without sudo)
+            if docker info >/dev/null 2>&1; then
+              DOCKER_CMD="docker"
+            elif sudo docker info >/dev/null 2>&1; then
+              DOCKER_CMD="sudo docker"
+            else
+              echo "❌ Docker is not accessible"
+              exit 1
+            fi
+            
+            # Pull the specific build version
+            eval "$DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}"
+            
+            # Stop and remove existing container
+            eval "$DOCKER_CMD stop calculator-app" 2>/dev/null || true
+            eval "$DOCKER_CMD rm calculator-app" 2>/dev/null || true
+            
+            # Clean up old images (keep last 3 builds)
+            echo "🧹 Cleaning up old images..."
+            eval "$DOCKER_CMD images sainadh99/calculator-app --format '{{.Tag}} {{.ID}}' | grep 'build-' | tail -n +4 | awk '{print \$2}' | xargs -r $DOCKER_CMD rmi" 2>/dev/null || true
+            
+            # Start new container with security restrictions
+            echo "🚀 Starting new container with build #${{ env.BUILD_NUMBER }}"
+            eval "$DOCKER_CMD run -d \
               --name calculator-app \
               --restart unless-stopped \
               -p 80:3000 \
@@ -191,7 +221,20 @@ jobs:
               --cap-add SETUID \
               --cap-add NET_BIND_SERVICE \
               --user 1001:1001 \
-              sainadh99/calculator-app:${{ env.BUILD_TAG }}
+              sainadh99/calculator-app:${{ env.BUILD_TAG }}"
+            
+            sleep 5
+            
+            # Verify deployment
+            if eval "$DOCKER_CMD ps" | grep calculator-app; then
+              echo "✅ Deployment successful - Build #${{ env.BUILD_NUMBER }}!"
+              echo "📋 Container info:"
+              eval "$DOCKER_CMD ps --filter name=calculator-app --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'"
+            else
+              echo "❌ Deployment failed!"
+              eval "$DOCKER_CMD logs calculator-app" 2>/dev/null || true
+              exit 1
+            fi
 
       # Step 9: Health Check
       - name: Health Check
@@ -203,12 +246,27 @@ jobs:
         run: |
           echo "⏳ Waiting for app to be ready..."
           sleep 30
-          if curl -fs "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
-            echo "✅ App is running!"
-          else
-            echo "⚠️ App not responding. Check logs on VM."
+          
+          # Multiple health check attempts
+          HEALTH_CHECK_PASSED=false
+          for i in {1..5}; do
+            echo "🔍 Health check attempt $i/5"
+            for url in "http://${{ secrets.GCP_VM_HOST }}" "http://${{ secrets.GCP_VM_HOST }}:80" "http://${{ secrets.GCP_VM_HOST }}/health"; do
+              if curl -fs --max-time 10 "$url" >/dev/null; then
+                echo "✅ App is running and healthy at $url"
+                HEALTH_CHECK_PASSED=true
+                break 2
+              fi
+            done
+            [ $i -lt 5 ] && sleep 10
+          done
+          
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "⚠️ Health check failed after 5 attempts."
+            echo "Please verify manually: http://${{ secrets.GCP_VM_HOST }}"
+          fi
 
-      # Step 10: Container Maintenance (cleanup)
+      # Step 10: Container maintenance (cleanup old images)
       - name: Container Maintenance
         if: |
           github.event_name == 'pull_request' &&
@@ -229,17 +287,20 @@ jobs:
             elif sudo docker info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             else
+              echo "Docker not accessible, skipping maintenance"
               exit 0
             fi
-
-            echo "🧹 Performing maintenance..."
+            
+            echo "🧹 Performing container maintenance..."
+            
+            # Clean up unused containers, networks, images
             eval "$DOCKER_CMD system prune -f" || true
-
+            
             echo "📦 Current calculator-app images:"
-            eval "$DOCKER_CMD images sainadh99/calculator-app --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}'"
-
+            eval "$DOCKER_CMD images sainadh99/calculator-app --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}'" || true
+            
             echo "🏃 Running containers:"
-            eval "$DOCKER_CMD ps --filter name=calculator-app --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'"
+            eval "$DOCKER_CMD ps --filter name=calculator-app --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'" || true
 
       # Step 11: Deployment Success Notification
       - name: Deployment Success Notification
@@ -257,10 +318,11 @@ jobs:
           echo "  • Merged by: ${{ github.event.pull_request.merged_by.login }}"
           echo "  • PR: #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
           echo "  • Commit: ${{ github.sha }}"
+          echo "  • Build Date: ${{ env.BUILD_DATE }}"
           echo "  • App URL: http://${{ secrets.GCP_VM_HOST }}"
           echo "  • Security: Enhanced with restricted capabilities and read-only filesystem"
 
-      # Step 12: Deployment skipped for PRs merged by others
+      # Step 12: Show when deployment is skipped
       - name: Deployment Skipped
         if: |
           github.event_name == 'pull_request' &&
@@ -273,4 +335,5 @@ jobs:
           echo "  • PR: #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
           echo "  • Merged by: ${{ github.event.pull_request.merged_by.login }}"
           echo "  • Reason: Only PRs merged by 'sainadh99' trigger deployment"
+          echo ""
           echo "ℹ️ To deploy this change, ask sainadh99 to merge a new PR or manually trigger deployment."
