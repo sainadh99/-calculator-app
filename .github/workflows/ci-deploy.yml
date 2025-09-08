@@ -277,9 +277,14 @@ jobs:
             
             # Try internal health check first
             echo "🔍 Internal health check:"
-            $DOCKER_CMD exec calculator-app curl -f http://localhost:3000/health 2>/dev/null || \
-            $DOCKER_CMD exec calculator-app curl -f http://localhost:3000/ 2>/dev/null || \
-            echo "Internal health check failed"
+            $DOCKER_CMD exec calculator-app wget --no-verbose --tries=1 --spider http://localhost:3000/ 2>/dev/null && echo "✅ Internal health check passed" || \
+            echo "❌ Internal health check failed"
+            
+            # Check what's actually listening inside the container
+            echo "🔍 Checking listening ports inside container:"
+            $DOCKER_CMD exec calculator-app netstat -tlnp 2>/dev/null || \
+            $DOCKER_CMD exec calculator-app ss -tlnp 2>/dev/null || \
+            echo "Cannot check listening ports"
             
       - name: External Health Check
         run: |
