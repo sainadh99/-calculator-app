@@ -133,6 +133,10 @@ jobs:
             # Create volume if it doesn't exist
             $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1 || $DOCKER_CMD volume create calc-data
             
+            # Fix volume permissions for non-root user
+            echo "🔧 Setting up volume permissions..."
+            $DOCKER_CMD run --rm -v calc-data:/data alpine:latest chown -R 1001:1001 /data
+            
             # Create network if it doesn't exist
             $DOCKER_CMD network inspect calc-network >/dev/null 2>&1 || \
               $DOCKER_CMD network create --driver bridge \
