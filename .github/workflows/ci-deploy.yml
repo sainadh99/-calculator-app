@@ -10,7 +10,7 @@ jobs:
   ci-deploy:
     runs-on: ubuntu-latest  # Use GitHub's Ubuntu runner to execute jobs
     
-    # This big `if` ensures:
+    # Conditional execution:
     # - CI checks run for opened or updated PRs
     # - Deployment only happens if PR is merged by 'sainadh99'
     # - Manual workflow runs are allowed
@@ -31,7 +31,6 @@ jobs:
       # Step 0: Checkout the code
       - name: Checkout code
         uses: actions/checkout@v4
-        # This step pulls your repository code into the workflow runner
 
       # Step 1: Run CI checks for opened or updated PRs
       - name: PR CI Check
@@ -43,10 +42,9 @@ jobs:
           echo "   - Running linting (if configured)"
           echo "   - Running tests (if configured)"
           echo "✅ CI checks completed successfully"
-          echo ""
           echo "ℹ️ Deployment will only occur when merged by 'sainadh99'"
 
-      # Steps below only run if PR is merged by 'sainadh99'
+      # Steps 2-10 run only if PR is merged by 'sainadh99'
       # Step 2: Generate build number and metadata
       - name: Generate Build Number & Metadata
         if: |
@@ -56,11 +54,9 @@ jobs:
           github.event.pull_request.merged_by.login == 'sainadh99'
         id: build_number
         run: |
-          # Use GitHub's run number for versioning
           BUILD_NUMBER=${{ github.run_number }}
           BUILD_TAG="build-${BUILD_NUMBER}"
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          # Save variables for later steps
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
@@ -71,7 +67,7 @@ jobs:
           echo "👤 Merged by: ${{ github.event.pull_request.merged_by.login }}"
           echo "🔗 PR: #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
 
-      # Step 3: Setup Docker Buildx for building multi-platform images
+      # Step 3: Setup Docker Buildx
       - name: Set up Docker Buildx
         if: |
           github.event_name == 'pull_request' &&
@@ -80,7 +76,7 @@ jobs:
           github.event.pull_request.merged_by.login == 'sainadh99'
         uses: docker/setup-buildx-action@v3
 
-      # Step 4: Login to DockerHub
+      # Step 4: DockerHub Login
       - name: Docker Login
         if: |
           github.event_name == 'pull_request' &&
@@ -92,7 +88,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Step 5: Build and push Docker image
+      # Step 5: Build & Push Docker Image
       - name: Build & Push Docker Image
         if: |
           github.event_name == 'pull_request' &&
@@ -113,7 +109,7 @@ jobs:
             BUILD_DATE=${{ env.BUILD_DATE }}
             GIT_COMMIT=${{ github.sha }}
 
-      # Step 6: Verify secrets before deployment
+      # Step 6: Verify required secrets
       - name: Verify Required Secrets
         if: |
           github.event_name == 'pull_request' &&
@@ -158,7 +154,7 @@ jobs:
             fi
             docker --version || echo "⚠️ Docker command not available"
 
-      # Step 8: Deploy Docker container on GCP VM
+      # Step 8: Deploy Docker container
       - name: Deploy to GCP VM
         if: |
           github.event_name == 'pull_request' &&
@@ -197,7 +193,7 @@ jobs:
               --user 1001:1001 \
               sainadh99/calculator-app:${{ env.BUILD_TAG }}
 
-      # Step 9: Simple Health Check
+      # Step 9: Health Check
       - name: Health Check
         if: |
           github.event_name == 'pull_request' &&
@@ -212,7 +208,7 @@ jobs:
           else
             echo "⚠️ App not responding. Check logs on VM."
 
-      # Step 10: Container maintenance (cleanup old images)
+      # Step 10: Container Maintenance (cleanup)
       - name: Container Maintenance
         if: |
           github.event_name == 'pull_request' &&
@@ -226,4 +222,55 @@ jobs:
           key: ${{ secrets.GCP_VM_KEY }}
           port: 22
           timeout: 60s
-          script
+          script: |
+            # Determine Docker command
+            if docker info >/dev/null 2>&1; then
+              DOCKER_CMD="docker"
+            elif sudo docker info >/dev/null 2>&1; then
+              DOCKER_CMD="sudo docker"
+            else
+              exit 0
+            fi
+
+            echo "🧹 Performing maintenance..."
+            eval "$DOCKER_CMD system prune -f" || true
+
+            echo "📦 Current calculator-app images:"
+            eval "$DOCKER_CMD images sainadh99/calculator-app --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}'"
+
+            echo "🏃 Running containers:"
+            eval "$DOCKER_CMD ps --filter name=calculator-app --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'"
+
+      # Step 11: Deployment Success Notification
+      - name: Deployment Success Notification
+        if: |
+          github.event_name == 'pull_request' &&
+          github.event.action == 'closed' &&
+          github.event.pull_request.merged == true &&
+          github.event.pull_request.merged_by.login == 'sainadh99'
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "📊 Summary:"
+          echo "  • Build Number: #${{ env.BUILD_NUMBER }}"
+          echo "  • Build Tag: ${{ env.BUILD_TAG }}"
+          echo "  • Docker Image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
+          echo "  • Merged by: ${{ github.event.pull_request.merged_by.login }}"
+          echo "  • PR: #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
+          echo "  • Commit: ${{ github.sha }}"
+          echo "  • App URL: http://${{ secrets.GCP_VM_HOST }}"
+          echo "  • Security: Enhanced with restricted capabilities and read-only filesystem"
+
+      # Step 12: Deployment skipped for PRs merged by others
+      - name: Deployment Skipped
+        if: |
+          github.event_name == 'pull_request' &&
+          github.event.action == 'closed' &&
+          github.event.pull_request.merged == true &&
+          github.event.pull_request.merged_by.login != 'sainadh99'
+        run: |
+          echo "⚠️ Deployment skipped!"
+          echo "📋 Details:"
+          echo "  • PR: #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
+          echo "  • Merged by: ${{ github.event.pull_request.merged_by.login }}"
+          echo "  • Reason: Only PRs merged by 'sainadh99' trigger deployment"
+          echo "ℹ️ To deploy this change, ask sainadh99 to merge a new PR or manually trigger deployment."
