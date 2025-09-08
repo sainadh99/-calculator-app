@@ -31,7 +31,6 @@ jobs:
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-
       # ---------------------------
       # 3️⃣ Set up Docker Buildx
       # ---------------------------
@@ -64,7 +63,6 @@ jobs:
             BUILD_NUMBER=${{ env.BUILD_NUMBER }}
             BUILD_DATE=${{ env.BUILD_DATE }}
             GIT_COMMIT=${{ github.sha }}
-
       # ---------------------------
       # 6️⃣ Deploy Secure Container to GCP VM
       # ---------------------------
@@ -234,7 +232,6 @@ jobs:
             fi
             
             echo "✅ Container is running"
-
       # ---------------------------
       # 7️⃣ Container Status & Health Check
       # ---------------------------
@@ -329,7 +326,6 @@ jobs:
             
             exit 1
           fi
-
       # ---------------------------
       # 8️⃣ Container Maintenance
       # ---------------------------
@@ -351,16 +347,59 @@ jobs:
             echo "🧹 Cleaning up old containers..."
             $DOCKER_CMD container prune -f
             
-            echo "🧹 Cleaning up old images..."
-            OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +4 | awk '{print $1}')
-            if [ -n "$OLD_IMAGES" ]; then 
-              echo "Removing old images: $OLD_IMAGES"
-              echo "$OLD_IMAGES" | xargs -r $DOCKER_CMD rmi --force || true
+            echo "🧹 Cleaning up old calculator-app images..."
+            
+            # Get the currently running image ID to preserve it
+            CURRENT_IMAGE_ID=$($DOCKER_CMD inspect calculator-app --format='{{.Image}}' 2>/dev/null | cut -d':' -f2 | head -c 12)
+            echo "🔒 Current running image ID: $CURRENT_IMAGE_ID"
+            
+            # Get the latest build tag that was just deployed
+            CURRENT_BUILD_TAG="${{ env.BUILD_TAG }}"
+            echo "🏷️ Current build tag: $CURRENT_BUILD_TAG"
+            
+            # List all calculator-app images except latest tag and current build
+            echo "📋 Current calculator-app images:"
+            $DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}"
+            
+            # Remove old images (keep only latest and current build)
+            OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
+              grep -v ":latest" | \
+              grep -v ":$CURRENT_BUILD_TAG" | \
+              awk '{print $1}')
+            
+            if [ -n "$OLD_IMAGES" ]; then
+              echo "🗑️ Removing old images:"
+              echo "$OLD_IMAGES"
+              echo "$OLD_IMAGES" | while read -r image; do
+                echo "Removing: $image"
+                $DOCKER_CMD rmi "$image" --force 2>/dev/null || echo "Failed to remove $image (might be in use)"
+              done
+            else
+              echo "✅ No old images to remove"
             fi
             
+            # Alternative approach: Remove all calculator-app images except the current one
+            echo "🧹 Alternative cleanup - removing all old calculator-app images except current:"
+            $DOCKER_CMD images sainadh99/calculator-app --format "{{.ID}}" | while read -r image_id; do
+              # Skip if this is the currently running image
+              if [ "$image_id" != "$CURRENT_IMAGE_ID" ]; then
+                # Check if this image has the current build tag
+                IMAGE_TAGS=$($DOCKER_CMD inspect "$image_id" --format='{{range .RepoTags}}{{.}} {{end}}' 2>/dev/null)
+                if [[ ! "$IMAGE_TAGS" =~ ":latest" ]] && [[ ! "$IMAGE_TAGS" =~ ":$CURRENT_BUILD_TAG" ]]; then
+                  echo "Removing image: $image_id"
+                  $DOCKER_CMD rmi "$image_id" --force 2>/dev/null || echo "Failed to remove $image_id"
+                fi
+              fi
+            done
+            
+            # Clean up dangling images
+            echo "🧹 Cleaning up dangling images..."
             $DOCKER_CMD image prune -f
+            
+            echo "📋 Remaining calculator-app images:"
+            $DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}"
+            
             echo "✅ Maintenance completed"
-
       # ---------------------------
       # 9️⃣ Deployment Success Notification
       # ---------------------------
