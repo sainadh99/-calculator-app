@@ -187,26 +187,92 @@ jobs:
             fi
 
       # ---------------------------
-      # 7️⃣ Health Check
+      # 7️⃣ Container Status & Health Check
       # ---------------------------
-      - name: Health Check
-        run: |
-          echo "🔍 Starting health check..."
-          HEALTH_CHECK_PASSED=false
-          for i in {1..12}; do
-            echo "Health check attempt $i/12..."
-            if curl -fs --max-time 10 --connect-timeout 5 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null 2>&1; then
-              echo "✅ Health check passed!"
-              HEALTH_CHECK_PASSED=true
-              break
+      - name: Container Status & Health Check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_HOST }}
+          username: ${{ secrets.GCP_VM_USERNAME }}
+          key: ${{ secrets.GCP_VM_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 10m
+          script: |
+            DOCKER_CMD="docker"
+            if ! $DOCKER_CMD info >/dev/null 2>&1; then
+              DOCKER_CMD="sudo docker"
             fi
-            echo "⏳ Waiting 15 seconds before retry..."
-            sleep 15
+            
+            echo "🔍 Container diagnostics..."
+            
+            # Check if container is running
+            echo "📋 Container status:"
+            $DOCKER_CMD ps -a --filter name=calculator-app --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            
+            # Get container logs
+            echo "📝 Container logs (last 50 lines):"
+            $DOCKER_CMD logs --tail 50 calculator-app 2>&1 || echo "Failed to get logs"
+            
+            # Check container health
+            echo "🏥 Container health status:"
+            $DOCKER_CMD inspect calculator-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health status available"
+            
+            # Check if container is actually running
+            if ! $DOCKER_CMD ps | grep -q calculator-app; then
+              echo "❌ Container is not running!"
+              echo "🔍 Checking container inspect for exit reason:"
+              $DOCKER_CMD inspect calculator-app --format='{{.State.ExitCode}} - {{.State.Error}}' 2>/dev/null || echo "Cannot inspect container"
+              exit 1
+            fi
+            
+            # Check network connectivity
+            echo "🌐 Network diagnostics:"
+            $DOCKER_CMD exec calculator-app netstat -tlnp 2>/dev/null || echo "Cannot check ports inside container"
+            
+            # Try internal health check first
+            echo "🔍 Internal health check:"
+            $DOCKER_CMD exec calculator-app curl -f http://localhost:3000/health 2>/dev/null || \
+            $DOCKER_CMD exec calculator-app curl -f http://localhost:3000/ 2>/dev/null || \
+            echo "Internal health check failed"
+            
+      - name: External Health Check
+        run: |
+          echo "🔍 Starting external health check..."
+          HEALTH_CHECK_PASSED=false
+          
+          # Try different endpoints
+          ENDPOINTS=("/" "/health")
+          
+          for endpoint in "${ENDPOINTS[@]}"; do
+            echo "🎯 Testing endpoint: $endpoint"
+            for i in {1..6}; do
+              echo "Health check attempt $i/6 for $endpoint..."
+              if curl -fs --max-time 10 --connect-timeout 5 "http://${{ secrets.GCP_VM_HOST }}$endpoint" >/dev/null 2>&1; then
+                echo "✅ Health check passed for $endpoint!"
+                HEALTH_CHECK_PASSED=true
+                break 2
+              fi
+              echo "⏳ Waiting 10 seconds before retry..."
+              sleep 10
+            done
           done
           
           if [ "$HEALTH_CHECK_PASSED" = false ]; then
-            echo "❌ Container health check failed after 12 attempts!"
-            echo "🔍 Attempting to get container logs..."
+            echo "❌ External health check failed!"
+            echo "🔍 Testing basic connectivity..."
+            
+            # Test if port is open
+            if nc -zv ${{ secrets.GCP_VM_HOST }} 80 2>&1; then
+              echo "✅ Port 80 is open"
+            else
+              echo "❌ Port 80 is not accessible"
+            fi
+            
+            # Try to get response headers
+            echo "🔍 Attempting to get response headers..."
+            curl -I --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" 2>&1 || echo "Failed to get headers"
+            
             exit 1
           fi
 
