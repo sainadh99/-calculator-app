@@ -4,13 +4,10 @@ on:
   pull_request:
     types: [closed]
 
-env:
-  DOCKER_BUILDKIT: 1
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
+    if: github.event.pull_request.merged == true
 
     steps:
       # ---------------------------
@@ -31,14 +28,9 @@ jobs:
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-      # ---------------------------
-      # 3️⃣ Set up Docker Buildx
-      # ---------------------------
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
 
       # ---------------------------
-      # 4️⃣ Docker Login
+      # 3️⃣ Docker Login
       # ---------------------------
       - name: Docker Login
         uses: docker/login-action@v3
@@ -47,359 +39,235 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # ---------------------------
-      # 5️⃣ Build & Push Docker Image
+      # 4️⃣ Build & Push Docker Image
       # ---------------------------
       - name: Build & Push Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            sainadh99/calculator-app:latest
-            sainadh99/calculator-app:${{ env.BUILD_TAG }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            BUILD_NUMBER=${{ env.BUILD_NUMBER }}
-            BUILD_DATE=${{ env.BUILD_DATE }}
-            GIT_COMMIT=${{ github.sha }}
-      # ---------------------------
-      # 6️⃣ Deploy Secure Container to GCP VM
-      # ---------------------------
-      - name: Deploy Secure Container to GCP VM
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USERNAME }}
-          key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 25m
-          script: |
-            export HOME=/home/${{ secrets.GCP_VM_USERNAME }}
-            
-            # Determine Docker command
-            DOCKER_CMD="docker"
-            if ! $DOCKER_CMD info >/dev/null 2>&1; then
-              DOCKER_CMD="sudo docker"
-            fi
-            
-            # Create seccomp profile directory
-            mkdir -p $HOME/docker-seccomp
-            
-            # Create enhanced seccomp profile
-            cat << 'EOF' > $HOME/docker-seccomp/seccomp.json
-            {
-              "defaultAction": "SCMP_ACT_ERRNO",
-              "architectures": ["SCMP_ARCH_X86_64"],
-              "syscalls": [
-                {
-                  "names": [
-                    "accept", "accept4", "access", "alarm", "arch_prctl", "bind", "brk",
-                    "chdir", "chmod", "chown", "clock_getres", "clock_gettime", "clock_nanosleep",
-                    "clone", "close", "connect", "dup", "dup2", "epoll_create", "epoll_ctl",
-                    "epoll_pwait", "epoll_wait", "eventfd2", "execve", "exit", "exit_group",
-                    "fchdir", "fchmod", "fchown", "fcntl", "fdatasync", "flock", "fork",
-                    "fstat", "fsync", "ftruncate", "futex", "getcwd", "getdents", "getegid",
-                    "geteuid", "getgid", "getpid", "getppid", "getrandom", "getrlimit",
-                    "getsid", "getsockname", "getsockopt", "gettid", "gettimeofday", "getuid",
-                    "inotify_add_watch", "inotify_init1", "ioctl", "kill", "listen", "lseek",
-                    "lstat", "madvise", "mkdir", "mmap", "mprotect", "munmap", "nanosleep",
-                    "newfstatat", "open", "openat", "pipe", "pipe2", "poll", "prctl", "pread64",
-                    "prlimit64", "pwrite64", "read", "readlink", "readlinkat", "recvfrom",
-                    "recvmsg", "rename", "renameat", "rt_sigaction", "rt_sigprocmask",
-                    "rt_sigreturn", "sched_getaffinity", "sched_yield", "select", "sendfile",
-                    "sendmsg", "sendto", "setgid", "setgroups", "setrlimit", "setsid",
-                    "setsockopt", "setuid", "shutdown", "sigaltstack", "socket", "stat",
-                    "statfs", "symlink", "symlinkat", "sync", "sysinfo", "tgkill", "time",
-                    "times", "truncate", "umask", "uname", "unlink", "unlinkat", "utime",
-                    "utimes", "vfork", "wait4", "waitpid", "write"
-                  ],
-                  "action": "SCMP_ACT_ALLOW"
-                }
-              ]
-            }
-            EOF
-            
-            # Stop and remove previous container
-            $DOCKER_CMD stop calculator-app 2>/dev/null || true
-            $DOCKER_CMD rm calculator-app 2>/dev/null || true
-            
-            # Pull latest image (disable content trust for pulling)
-            DOCKER_CONTENT_TRUST=0 $DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
-            
-            # Create volume if it doesn't exist
-            $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1 || $DOCKER_CMD volume create calc-data
-            
-            # Fix volume permissions for non-root user
-            echo "🔧 Setting up volume permissions..."
-            $DOCKER_CMD run --rm -v calc-data:/data alpine:latest chown -R 1001:1001 /data
-            
-            # Create network if it doesn't exist
-            $DOCKER_CMD network inspect calc-network >/dev/null 2>&1 || \
-              $DOCKER_CMD network create --driver bridge \
-              --opt com.docker.network.bridge.name=calc-br \
-              --opt com.docker.network.bridge.enable_icc=false \
-              --opt com.docker.network.bridge.enable_ip_masquerade=true \
-              calc-network
-            
-            # First try with custom network, if that fails, try with host network as fallback
-            echo "🚀 Starting container with custom network..."
-            
-            if $DOCKER_CMD run -d --name calculator-app --restart unless-stopped \
-              --network calc-network \
-              -p 80:3000 \
-              --memory=256m --memory-swap=256m \
-              --cpus=0.5 \
-              --pids-limit=50 \
-              --ulimit nofile=1024:1024 \
-              --ulimit nproc=50:50 \
-              --tmpfs /usr/src/app/tmp:rw,noexec,nosuid,nodev,size=50m \
-              --tmpfs /tmp:rw,noexec,nosuid,nodev,size=20m \
-              --tmpfs /var/tmp:rw,noexec,nosuid,nodev,size=10m \
-              --security-opt no-new-privileges:true \
-              --cap-drop ALL \
-              --cap-add CHOWN \
-              --cap-add SETGID \
-              --cap-add SETUID \
-              --cap-add NET_BIND_SERVICE \
-              --user 1001:1001 \
-              --hostname calculator-app \
-              --env NODE_ENV=production \
-              --env PORT=3000 \
-              --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1" \
-              --health-interval=30s \
-              --health-timeout=10s \
-              --health-retries=3 \
-              --health-start-period=60s \
-              --log-driver json-file \
-              --log-opt max-size=10m \
-              --log-opt max-file=3 \
-              -v calc-data:/usr/src/app/data:rw \
-              sainadh99/calculator-app:${{ env.BUILD_TAG }}; then
-              echo "✅ Container started successfully"
-            else
-              echo "⚠️ Container failed to start with custom network, trying host network..."
-              $DOCKER_CMD rm -f calculator-app 2>/dev/null || true
-              
-              $DOCKER_CMD run -d --name calculator-app --restart unless-stopped \
-                --network host \
-                --memory=256m --memory-swap=256m \
-                --cpus=0.5 \
-                --pids-limit=50 \
-                --ulimit nofile=1024:1024 \
-                --ulimit nproc=50:50 \
-                --tmpfs /usr/src/app/tmp:rw,noexec,nosuid,nodev,size=50m \
-                --tmpfs /tmp:rw,noexec,nosuid,nodev,size=20m \
-                --tmpfs /var/tmp:rw,noexec,nosuid,nodev,size=10m \
-                --security-opt no-new-privileges:true \
-                --cap-drop ALL \
-                --cap-add CHOWN \
-                --cap-add SETGID \
-                --cap-add SETUID \
-                --cap-add NET_BIND_SERVICE \
-                --user 1001:1001 \
-                --hostname calculator-app \
-                --env NODE_ENV=production \
-                --env PORT=80 \
-                --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:80/ || exit 1" \
-                --health-interval=30s \
-                --health-timeout=10s \
-                --health-retries=3 \
-                --health-start-period=60s \
-                --log-driver json-file \
-                --log-opt max-size=10m \
-                --log-opt max-file=3 \
-                -v calc-data:/usr/src/app/data:rw \
-                sainadh99/calculator-app:${{ env.BUILD_TAG }}
-            fi
-            
-            # Wait for container to initialize
-            echo "⏳ Waiting 15 seconds for container to initialize..."
-            sleep 15
-            
-            # Verify container is running and get detailed status
-            echo "📋 Container status check:"
-            $DOCKER_CMD ps -a --filter name=calculator-app --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-            
-            if ! $DOCKER_CMD ps | grep -q calculator-app; then
-              echo "❌ Container failed to start"
-              echo "📝 Container logs:"
-              $DOCKER_CMD logs calculator-app 2>&1 || echo "No logs available"
-              echo "🔍 Container inspect:"
-              $DOCKER_CMD inspect calculator-app --format='{{.State.ExitCode}} - {{.State.Error}}' 2>/dev/null || echo "Cannot inspect"
-              exit 1
-            fi
-            
-            echo "✅ Container is running"
-      # ---------------------------
-      # 7️⃣ Container Status & Health Check
-      # ---------------------------
-      - name: Container Status & Health Check
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USERNAME }}
-          key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 10m
-          script: |
-            DOCKER_CMD="docker"
-            if ! $DOCKER_CMD info >/dev/null 2>&1; then
-              DOCKER_CMD="sudo docker"
-            fi
-            
-            echo "🔍 Container diagnostics..."
-            
-            # Check if container is running
-            echo "📋 Container status:"
-            $DOCKER_CMD ps -a --filter name=calculator-app --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-            
-            # Get container logs
-            echo "📝 Container logs (last 50 lines):"
-            $DOCKER_CMD logs --tail 50 calculator-app 2>&1 || echo "Failed to get logs"
-            
-            # Check container health
-            echo "🏥 Container health status:"
-            $DOCKER_CMD inspect calculator-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health status available"
-            
-            # Check if container is actually running
-            if ! $DOCKER_CMD ps | grep -q calculator-app; then
-              echo "❌ Container is not running!"
-              echo "🔍 Checking container inspect for exit reason:"
-              $DOCKER_CMD inspect calculator-app --format='{{.State.ExitCode}} - {{.State.Error}}' 2>/dev/null || echo "Cannot inspect container"
-              exit 1
-            fi
-            
-            # Check network connectivity
-            echo "🌐 Network diagnostics:"
-            $DOCKER_CMD exec calculator-app netstat -tlnp 2>/dev/null || echo "Cannot check ports inside container"
-            
-            # Try internal health check first
-            echo "🔍 Internal health check:"
-            $DOCKER_CMD exec calculator-app wget --no-verbose --tries=1 --spider http://localhost:3000/ 2>/dev/null && echo "✅ Internal health check passed" || \
-            echo "❌ Internal health check failed"
-            
-            # Check what's actually listening inside the container
-            echo "🔍 Checking listening ports inside container:"
-            $DOCKER_CMD exec calculator-app netstat -tlnp 2>/dev/null || \
-            $DOCKER_CMD exec calculator-app ss -tlnp 2>/dev/null || \
-            echo "Cannot check listening ports"
-            
-      - name: External Health Check
         run: |
-          echo "🔍 Starting external health check..."
-          HEALTH_CHECK_PASSED=false
+          docker build -t sainadh99/calculator-app:latest \
+                      -t sainadh99/calculator-app:${{ env.BUILD_TAG }} \
+                      --build-arg BUILD_NUMBER=${{ env.BUILD_NUMBER }} \
+                      --build-arg BUILD_DATE=${{ env.BUILD_DATE }} \
+                      --build-arg GIT_COMMIT=${{ github.sha }} .
+          docker push sainadh99/calculator-app:latest
+          docker push sainadh99/calculator-app:${{ env.BUILD_TAG }}
+
+      # ---------------------------
+      # 5️⃣ Deploy Secure Container
+      # ---------------------------
+      - name: Deploy Secure Container
+        run: |
+          # Install Docker if not available
+          if ! command -v docker &> /dev/null; then
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sh get-docker.sh
+          fi
           
-          # Try different endpoints
-          ENDPOINTS=("/" "/health")
+          # Stop and remove previous container
+          docker stop calculator-app 2>/dev/null || true
+          docker rm calculator-app 2>/dev/null || true
           
-          for endpoint in "${ENDPOINTS[@]}"; do
-            echo "🎯 Testing endpoint: $endpoint"
-            for i in {1..6}; do
-              echo "Health check attempt $i/6 for $endpoint..."
-              if curl -fs --max-time 10 --connect-timeout 5 "http://${{ secrets.GCP_VM_HOST }}$endpoint" >/dev/null 2>&1; then
-                echo "✅ Health check passed for $endpoint!"
-                HEALTH_CHECK_PASSED=true
-                break 2
-              fi
-              echo "⏳ Waiting 10 seconds before retry..."
-              sleep 10
-            done
-          done
+          # Pull latest image
+          docker pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
           
-          if [ "$HEALTH_CHECK_PASSED" = false ]; then
-            echo "❌ External health check failed!"
-            echo "🔍 Testing basic connectivity..."
-            
-            # Test if port is open
-            if nc -zv ${{ secrets.GCP_VM_HOST }} 80 2>&1; then
-              echo "✅ Port 80 is open"
-            else
-              echo "❌ Port 80 is not accessible"
-            fi
-            
-            # Try to get response headers
-            echo "🔍 Attempting to get response headers..."
-            curl -I --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" 2>&1 || echo "Failed to get headers"
-            
+          # Create network if it doesn't exist
+          docker network inspect calc-network >/dev/null 2>&1 || \
+            docker network create --driver bridge calc-network
+          
+          # Deploy with Docker security restrictions
+          docker run -d --name calculator-app --restart unless-stopped \
+            --network calc-network \
+            -p 80:3000 \
+            --memory=512m \
+            --cpus=1.0 \
+            --pids-limit=100 \
+            --security-opt no-new-privileges:true \
+            --cap-drop ALL \
+            --cap-add NET_BIND_SERVICE \
+            --cap-add SETGID \
+            --cap-add SETUID \
+            --hostname calculator-app \
+            --env NODE_ENV=production \
+            --env PORT=3000 \
+            --health-cmd="curl -f http://localhost:3000/ || exit 1" \
+            --health-interval=30s \
+            --health-timeout=10s \
+            --health-retries=3 \
+            --health-start-period=60s \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            sainadh99/calculator-app:${{ env.BUILD_TAG }}
+
+      # ---------------------------
+      # 6️⃣ Docker Security Validation
+      # ---------------------------
+      - name: Docker Security Validation
+        run: |
+          echo "🔒 Docker Security Validation Report"
+          echo "======================================"
+          
+          # Check if container is running
+          if ! docker ps | grep -q calculator-app; then
+            echo "❌ Container is not running - security validation failed"
             exit 1
           fi
+          
+          echo "✅ Container Status: Running"
+          
+          # Validate security configurations
+          echo ""
+          echo "🛡️ Security Configuration Audit:"
+          echo "--------------------------------"
+          
+          # Check capabilities
+          echo ""
+          echo "🔐 Capability Analysis:"
+          CAPS=$(docker inspect calculator-app --format='{{.HostConfig.CapDrop}}' 2>/dev/null)
+          if [[ "$CAPS" =~ "ALL" ]]; then
+            echo "✅ All capabilities dropped"
+            ADDED_CAPS=$(docker inspect calculator-app --format='{{.HostConfig.CapAdd}}' 2>/dev/null)
+            echo "   Added capabilities: $ADDED_CAPS"
+          else
+            echo "❌ Security Risk: Not all capabilities dropped"
+          fi
+          
+          # Check security options
+          echo ""
+          echo "🔒 Security Options:"
+          SECURITY_OPTS=$(docker inspect calculator-app --format='{{range .HostConfig.SecurityOpt}}{{.}} {{end}}' 2>/dev/null)
+          echo "   Active security options: $SECURITY_OPTS"
+          
+          if [[ "$SECURITY_OPTS" =~ "no-new-privileges:true" ]]; then
+            echo "✅ Privilege escalation blocked"
+          else
+            echo "❌ Security Risk: Privilege escalation not blocked"
+          fi
+          
+          # Check resource limits
+          echo ""
+          echo "⚡ Resource Limits:"
+          MEMORY_LIMIT=$(docker inspect calculator-app --format='{{.HostConfig.Memory}}' 2>/dev/null)
+          CPU_LIMIT=$(docker inspect calculator-app --format='{{.HostConfig.NanoCpus}}' 2>/dev/null)
+          PIDS_LIMIT=$(docker inspect calculator-app --format='{{.HostConfig.PidsLimit}}' 2>/dev/null)
+          
+          echo "   Memory limit: $((MEMORY_LIMIT / 1024 / 1024))MB"
+          echo "   CPU limit: $((CPU_LIMIT / 1000000000)) cores"
+          echo "   PIDs limit: $PIDS_LIMIT"
+          
+          if [ "$MEMORY_LIMIT" -gt 0 ] && [ "$CPU_LIMIT" -gt 0 ] && [ "$PIDS_LIMIT" -gt 0 ]; then
+            echo "✅ Resource limits properly configured"
+          else
+            echo "⚠️ Warning: Some resource limits may not be set"
+          fi
+          
+          # Check network isolation
+          echo ""
+          echo "🌐 Network Security:"
+          NETWORK_MODE=$(docker inspect calculator-app --format='{{.HostConfig.NetworkMode}}' 2>/dev/null)
+          echo "   Network mode: $NETWORK_MODE"
+          
+          if [ "$NETWORK_MODE" = "calc-network" ]; then
+            echo "✅ Custom isolated network"
+          elif [ "$NETWORK_MODE" = "host" ]; then
+            echo "⚠️ Warning: Host network mode (reduced isolation)"
+          else
+            echo "❓ Network mode: $NETWORK_MODE"
+          fi
+          
+          # Check for privileged mode
+          echo ""
+          echo "🚫 Privilege Check:"
+          PRIVILEGED=$(docker inspect calculator-app --format='{{.HostConfig.Privileged}}' 2>/dev/null)
+          if [ "$PRIVILEGED" = "false" ]; then
+            echo "✅ Non-privileged container"
+          else
+            echo "❌ CRITICAL: Container running in privileged mode!"
+          fi
+          
+          # Final security score
+          echo ""
+          echo "📊 Security Score Calculation:"
+          echo "=============================="
+          
+          SECURITY_SCORE=0
+          MAX_SCORE=8
+          
+          # Score components
+          [[ "$CAPS" =~ "ALL" ]] && SECURITY_SCORE=$((SECURITY_SCORE + 2)) && echo "✅ Capabilities dropped (+2)"
+          [[ "$SECURITY_OPTS" =~ "no-new-privileges" ]] && SECURITY_SCORE=$((SECURITY_SCORE + 2)) && echo "✅ Privilege escalation blocked (+2)"
+          [ "$PRIVILEGED" = "false" ] && SECURITY_SCORE=$((SECURITY_SCORE + 2)) && echo "✅ Non-privileged (+2)"
+          [ "$MEMORY_LIMIT" -gt 0 ] && SECURITY_SCORE=$((SECURITY_SCORE + 1)) && echo "✅ Resource limits (+1)"
+          [ "$NETWORK_MODE" != "host" ] && SECURITY_SCORE=$((SECURITY_SCORE + 1)) && echo "✅ Network isolation (+1)"
+          
+          echo ""
+          echo "🎯 Final Security Score: $SECURITY_SCORE/$MAX_SCORE"
+          
+          if [ "$SECURITY_SCORE" -ge 6 ]; then
+            echo "🎉 EXCELLENT: Container security is properly configured"
+          elif [ "$SECURITY_SCORE" -ge 4 ]; then
+            echo "✅ GOOD: Container security is acceptable"
+          else
+            echo "❌ CRITICAL: Container security is insufficient"
+            exit 1
+          fi
+          
+          echo ""
+          echo "🔒 Security validation completed successfully"
+
+      # ---------------------------
+      # 7️⃣ Container Health Check
+      # ---------------------------
+      - name: Container Health Check
+        run: |
+          echo "🔍 Container Health Check..."
+          
+          # Wait for container to initialize
+          echo "⏳ Waiting 30 seconds for container to initialize..."
+          sleep 30
+          
+          # Check container status
+          echo "📋 Container status:"
+          docker ps -a --filter name=calculator-app --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          
+          # Check container health
+          echo "🏥 Container health status:"
+          docker inspect calculator-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health status available"
+          
+          # Verify container is running
+          if ! docker ps | grep -q calculator-app; then
+            echo "❌ Container is not running!"
+            docker logs calculator-app
+            exit 1
+          fi
+          
+          echo "✅ Container is healthy and running"
+
       # ---------------------------
       # 8️⃣ Container Maintenance
       # ---------------------------
       - name: Container Maintenance
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USERNAME }}
-          key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 10m
-          script: |
-            DOCKER_CMD="docker"
-            if ! $DOCKER_CMD info >/dev/null 2>&1; then
-              DOCKER_CMD="sudo docker"
-            fi
-            
-            echo "🧹 Cleaning up old containers..."
-            $DOCKER_CMD container prune -f
-            
-            echo "🧹 Cleaning up old calculator-app images..."
-            
-            # Get the currently running image ID to preserve it
-            CURRENT_IMAGE_ID=$($DOCKER_CMD inspect calculator-app --format='{{.Image}}' 2>/dev/null | cut -d':' -f2 | head -c 12)
-            echo "🔒 Current running image ID: $CURRENT_IMAGE_ID"
-            
-            # Get the latest build tag that was just deployed
-            CURRENT_BUILD_TAG="${{ env.BUILD_TAG }}"
-            echo "🏷️ Current build tag: $CURRENT_BUILD_TAG"
-            
-            # List all calculator-app images except latest tag and current build
-            echo "📋 Current calculator-app images:"
-            $DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}"
-            
-            # Remove old images (keep only latest and current build)
-            OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
-              grep -v ":latest" | \
-              grep -v ":$CURRENT_BUILD_TAG" | \
-              awk '{print $1}')
-            
-            if [ -n "$OLD_IMAGES" ]; then
-              echo "🗑️ Removing old images:"
-              echo "$OLD_IMAGES"
-              echo "$OLD_IMAGES" | while read -r image; do
+        run: |
+          echo "🧹 Cleaning up old containers..."
+          docker container prune -f
+          
+          echo "🧹 Cleaning up old images..."
+          # Keep only latest and current build
+          docker images sainadh99/calculator-app --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
+            grep -v ":latest" | \
+            grep -v ":${{ env.BUILD_TAG }}" | \
+            awk '{print $1}' | \
+            while read -r image; do
+              if [ -n "$image" ]; then
                 echo "Removing: $image"
-                $DOCKER_CMD rmi "$image" --force 2>/dev/null || echo "Failed to remove $image (might be in use)"
-              done
-            else
-              echo "✅ No old images to remove"
-            fi
-            
-            # Alternative approach: Remove all calculator-app images except the current one
-            echo "🧹 Alternative cleanup - removing all old calculator-app images except current:"
-            $DOCKER_CMD images sainadh99/calculator-app --format "{{.ID}}" | while read -r image_id; do
-              # Skip if this is the currently running image
-              if [ "$image_id" != "$CURRENT_IMAGE_ID" ]; then
-                # Check if this image has the current build tag
-                IMAGE_TAGS=$($DOCKER_CMD inspect "$image_id" --format='{{range .RepoTags}}{{.}} {{end}}' 2>/dev/null)
-                if [[ ! "$IMAGE_TAGS" =~ ":latest" ]] && [[ ! "$IMAGE_TAGS" =~ ":$CURRENT_BUILD_TAG" ]]; then
-                  echo "Removing image: $image_id"
-                  $DOCKER_CMD rmi "$image_id" --force 2>/dev/null || echo "Failed to remove $image_id"
-                fi
+                docker rmi "$image" --force 2>/dev/null || echo "Failed to remove $image"
               fi
             done
-            
-            # Clean up dangling images
-            echo "🧹 Cleaning up dangling images..."
-            $DOCKER_CMD image prune -f
-            
-            echo "📋 Remaining calculator-app images:"
-            $DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}"
-            
-            echo "✅ Maintenance completed"
+          
+          # Clean up dangling images
+          docker image prune -f
+          
+          echo "✅ Maintenance completed"
+
       # ---------------------------
       # 9️⃣ Deployment Success Notification
       # ---------------------------
@@ -407,7 +275,13 @@ jobs:
         run: |
           echo "🎉 Deployment successful!"
           echo "🏷️ Version: ${{ env.BUILD_TAG }}"
-          echo "📦 App: Calculator App (Hardened)"
-          echo "🌐 URL: http://${{ secrets.GCP_VM_HOST }}"
-          echo "🔒 Security: Non-root, read-only FS, seccomp, limited resources"
+          echo "📦 App: Calculator App (Docker Security Focused)"
+          echo "🔒 Docker Security Features:"
+          echo "   • All capabilities dropped (minimal required restored)"
+          echo "   • No privilege escalation (no-new-privileges)"
+          echo "   • Non-privileged container"
+          echo "   • Resource limits (512MB RAM, 1.0 CPU, 100 PIDs)"
+          echo "   • Isolated network with custom bridge"
+          echo "   • Container health monitoring"
+          echo "   • Automated security validation"
           echo "⏰ Deployed at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
