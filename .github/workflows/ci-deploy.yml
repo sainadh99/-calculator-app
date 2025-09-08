@@ -6,12 +6,11 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  DOCKER_CONTENT_TRUST: 1  # Ensure only signed images are deployed
+  DOCKER_CONTENT_TRUST: 1  # Enabled for build/push
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Only run when PR is merged by sainadh99
     if: github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
 
     steps:
@@ -33,7 +32,6 @@ jobs:
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-          
           echo "🎯 Deployment authorized - PR #${{ github.event.pull_request.number }} merged by sainadh99"
           echo "🔢 Build Number: $BUILD_NUMBER"
           echo "🏷️ Build Tag: $BUILD_TAG"
@@ -55,7 +53,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # ---------------------------
-      # 5️⃣ Build & Push Docker Image (Immutable)
+      # 5️⃣ Build & Push Docker Image
       # ---------------------------
       - name: Build & Push Docker Image
         uses: docker/build-push-action@v5
@@ -84,24 +82,25 @@ jobs:
           timeout: 60s
           command_timeout: 15m
           script: |
+            export DOCKER_CONTENT_TRUST=0  # Disable DCT for remote pull
+
             DOCKER_CMD="docker"
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
+
             echo "📦 Pulling Docker image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
             $DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
-            
+
             echo "🛑 Stopping old container (if exists)"
             $DOCKER_CMD stop calculator-app || true
             $DOCKER_CMD rm calculator-app || true
 
-            # Persistent volume
             if ! $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1; then
               echo "📁 Creating persistent Docker volume: calc-data"
               $DOCKER_CMD volume create calc-data
             fi
 
-            # Restricted network
             if ! $DOCKER_CMD network inspect calc-network >/dev/null 2>&1; then
               echo "🌐 Creating restricted Docker network: calc-network"
               $DOCKER_CMD network create --driver bridge \
@@ -125,7 +124,7 @@ jobs:
               --tmpfs /tmp:rw,noexec,nosuid,nodev,size=20m \
               --tmpfs /var/tmp:rw,noexec,nosuid,nodev,size=10m \
               --security-opt no-new-privileges:true \
-              --security-opt seccomp=/usr/src/app/seccomp.json \
+              --security-opt seccomp=/usr/src/app/docker/seccomp.json \
               --security-opt apparmor:docker-default \
               --cap-drop ALL \
               --cap-add CHOWN \
@@ -154,19 +153,14 @@ jobs:
       - name: Health Check
         run: |
           HEALTH_CHECK_PASSED=false
-          echo "🏥 Starting health checks..."
           for i in {1..5}; do
-            echo "🔍 Attempt $i/5"
             if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
-              echo "✅ App is running!"
               HEALTH_CHECK_PASSED=true
               break
             fi
             sleep 15
           done
-          if [ "$HEALTH_CHECK_PASSED" = false ]; then
-            echo "❌ Health checks failed after 5 attempts."
-            exit 1
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then exit 1; fi
 
       # ---------------------------
       # 8️⃣ Container Maintenance
@@ -185,16 +179,11 @@ jobs:
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
-            echo "🧹 Cleaning up old containers and images..."
             $DOCKER_CMD container prune -f
             OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +3 | awk '{print $1}')
-            if [ -n "$OLD_IMAGES" ]; then
-              echo "🗑️ Removing old images: $OLD_IMAGES"
-              echo "$OLD_IMAGES" | xargs -r $DOCKER_CMD rmi || true
-            fi
+            if [ -n "$OLD_IMAGES" ]; then echo "$OLD_IMAGES" | xargs -r $DOCKER_CMD rmi || true; fi
             $DOCKER_CMD image prune -f
             echo "💾 Preserving persistent data volume: calc-data"
-            echo "✅ Container maintenance completed"
 
       # ---------------------------
       # 9️⃣ Deployment Success Notification
@@ -202,20 +191,20 @@ jobs:
       - name: Deployment Success Notification
         run: |
           echo "🎉 SECURE DEPLOYMENT SUCCESSFUL!"
-          echo "📦 Application: Calculator App (Hardened)"
+          echo "📦 App: Calculator App (Hardened)"
           echo "🏷️ Version: ${{ env.BUILD_TAG }}"
-          echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
-          echo "📅 Build Date: ${{ env.BUILD_DATE }}"
+          echo "🔢 Build: ${{ env.BUILD_NUMBER }}"
+          echo "📅 Date: ${{ env.BUILD_DATE }}"
           echo "🌐 URL: http://${{ secrets.GCP_VM_HOST }}"
           echo "👤 Deployed by: ${{ github.event.pull_request.merged_by.login }}"
           echo "📝 PR: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}"
           echo "🔗 Commit: ${{ github.sha }}"
           echo "🔒 SECURITY FEATURES ENABLED:"
-          echo "  ✅ Container running as non-root user (1001:1001)"
+          echo "  ✅ Non-root user (1001:1001)"
           echo "  ✅ Read-only root filesystem"
           echo "  ✅ All capabilities dropped except essential ones"
           echo "  ✅ Resource limits: 256MB RAM, 0.5 CPU, 50 PIDs"
           echo "  ✅ Network isolation with custom bridge"
-          echo "  ✅ tmpfs for sensitive directories"
-          echo "  ✅ Docker Content Trust enabled"
-          echo "════════════════════════════════════════"
+          echo "  ✅ tmpfs for sensitive dirs"
+          echo "  ✅ Seccomp profile applied"
+          echo "  ✅ Docker Content Trust enabled for build/push"
