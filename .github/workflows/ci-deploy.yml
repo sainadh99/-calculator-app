@@ -11,15 +11,17 @@ on:
 jobs:
   ci-deploy:
     runs-on: ubuntu-latest
-    steps:
+    if: |
+      ( github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize') ) ||
+      ( github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99' ) ||
+      github.event_name == 'workflow_dispatch'
 
-      # 1️⃣ Checkout code
+    steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2️⃣ PR CI Checks
       - name: PR CI Check
-        if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')
+        if: github.event.action == 'opened' || github.event.action == 'synchronize'
         run: |
           echo "🔹 PR #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
           echo "🔍 Running CI checks..."
@@ -28,13 +30,10 @@ jobs:
           echo " - Running tests (if configured)"
           echo "✅ CI checks completed successfully"
           echo ""
-          echo "ℹ️ Deployment will only occur when merged by 'sainadh99' or pushed to master"
+          echo "ℹ️ Deployment will only occur when merged by 'sainadh99'"
 
-      # 3️⃣ Generate Build Metadata
       - name: Generate Build Number & Metadata
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
         id: build_number
         run: |
           BUILD_NUMBER=${{ github.run_number }}
@@ -43,33 +42,24 @@ jobs:
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-          echo "🎯 Deployment authorized"
+          echo "🎯 Deployment authorized - PR merged by sainadh99"
           echo "🔢 Build Number: $BUILD_NUMBER"
           echo "🏷️ Build Tag: $BUILD_TAG"
           echo "📅 Build Date: $BUILD_DATE"
 
-      # 4️⃣ Set up Docker Buildx
       - name: Set up Docker Buildx
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
         uses: docker/setup-buildx-action@v3
 
-      # 5️⃣ Docker Login
       - name: Docker Login
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 6️⃣ Build & Push Docker Image
       - name: Build & Push Docker Image
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -84,11 +74,8 @@ jobs:
             BUILD_DATE=${{ env.BUILD_DATE }}
             GIT_COMMIT=${{ github.sha }}
 
-      # 7️⃣ Verify Required Secrets
       - name: Verify Required Secrets
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
         run: |
           echo "✅ Checking required secrets..."
           echo "GCP_VM_HOST: ${{ secrets.GCP_VM_HOST != '' && 'SET' || 'MISSING' }}"
@@ -101,11 +88,8 @@ jobs:
           echo "🏷️ Build Tag: ${{ env.BUILD_TAG }}"
           echo "📅 Build Date: ${{ env.BUILD_DATE }}"
 
-      # 8️⃣ Setup Docker on GCP VM
       - name: Setup Docker on GCP VM
-        if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
-          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
@@ -128,7 +112,6 @@ jobs:
             fi
             docker --version || echo "⚠️ Docker command not available"
 
-      # 9️⃣ Deploy to GCP VM
       - name: Deploy to GCP VM
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -146,46 +129,56 @@ jobs:
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
+
             echo "📦 Pulling Docker image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
             $DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
+
+            echo "🛑 Stopping old container (if exists)"
             $DOCKER_CMD stop calculator-app || true
             $DOCKER_CMD rm calculator-app || true
+
+            # Ensure persistent volume exists
+            if ! $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1; then
+              echo "📁 Creating persistent Docker volume: calc-data"
+              $DOCKER_CMD volume create calc-data
+            fi
+
+            echo "▶️ Starting new container"
             $DOCKER_CMD run -d --name calculator-app --restart unless-stopped \
               -p 80:3000 \
               --memory=512m --cpus=1.0 \
               --read-only \
               --tmpfs /usr/src/app/tmp:rw,noexec,nosuid,size=100m \
-              --tmpfs /usr/src/app/data:rw,noexec,nosuid,size=100m \
               --tmpfs /tmp:rw,noexec,nosuid,size=50m \
               --security-opt no-new-privileges:true \
               --cap-drop ALL --cap-add CHOWN --cap-add SETGID --cap-add SETUID --cap-add NET_BIND_SERVICE \
               --user 1001:1001 \
+              -v calc-data:/usr/src/app/data \
               sainadh99/calculator-app:${{ env.BUILD_TAG }}
 
-      # 🔟 Health Check
+            echo "✅ Container deployed successfully"
+
       - name: Health Check
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
           (github.event_name == 'push' && github.ref == 'refs/heads/master')
         run: |
           HEALTH_CHECK_PASSED=false
-          for i in {1..5}; do
-            echo "🔍 Health check attempt $i/5"
+          for i in {1..10}; do
+            echo "🔍 Health check attempt $i/10"
             if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
               HEALTH_CHECK_PASSED=true
               break
             fi
             sleep 10
           done
-
+          
           if [ "$HEALTH_CHECK_PASSED" = true ]; then
             echo "✅ App is running!"
           else
-            echo "⚠️ App not responding after 5 attempts."
+            echo "⚠️ App not responding after 10 attempts."
             exit 1
-          fi
 
-      # 1️⃣1️⃣ Container Maintenance
       - name: Container Maintenance
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -203,6 +196,7 @@ jobs:
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
+
             echo "🧹 Cleaning up old containers and images..."
             $DOCKER_CMD container prune -f
             OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +4 | awk '{print $1}')
@@ -216,7 +210,6 @@ jobs:
             echo "✅ Container maintenance completed"
             $DOCKER_CMD system df
 
-      # 1️⃣2️⃣ Deployment Success Notification
       - name: Deployment Success Notification
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -229,8 +222,8 @@ jobs:
           echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
           echo "📅 Build Date: ${{ env.BUILD_DATE }}"
           echo "🌐 URL: http://${{ secrets.GCP_VM_HOST }}"
-          echo "👤 Deployed by: ${{ github.actor }}"
-          echo "📝 PR: #${{ github.event.pull_request.number || 'N/A' }} - ${{ github.event.pull_request.title || 'Direct push' }}"
+          echo "👤 Deployed by: ${{ github.event.pull_request.merged_by.login || github.actor }}"
+          echo "📝 PR: #${{ github.event.pull_request.number || 'N/A' }} - ${{ github.event.pull_request.title || 'Direct commit' }}"
           echo "🔗 Commit: ${{ github.sha }}"
           echo "════════════════════════════════════════"
           echo ""
