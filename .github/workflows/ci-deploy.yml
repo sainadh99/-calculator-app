@@ -13,15 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-      # ---------------------------
       # 1️⃣ Checkout code
-      # ---------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ---------------------------
       # 2️⃣ PR CI Checks
-      # ---------------------------
       - name: PR CI Check
         if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')
         run: |
@@ -34,9 +30,7 @@ jobs:
           echo ""
           echo "ℹ️ Deployment will only occur when merged by 'sainadh99' or pushed to master"
 
-      # ---------------------------
       # 3️⃣ Generate Build Metadata
-      # ---------------------------
       - name: Generate Build Number & Metadata
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -54,18 +48,14 @@ jobs:
           echo "🏷️ Build Tag: $BUILD_TAG"
           echo "📅 Build Date: $BUILD_DATE"
 
-      # ---------------------------
       # 4️⃣ Set up Docker Buildx
-      # ---------------------------
       - name: Set up Docker Buildx
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
           (github.event_name == 'push' && github.ref == 'refs/heads/master')
         uses: docker/setup-buildx-action@v3
 
-      # ---------------------------
       # 5️⃣ Docker Login
-      # ---------------------------
       - name: Docker Login
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -75,9 +65,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ---------------------------
       # 6️⃣ Build & Push Docker Image
-      # ---------------------------
       - name: Build & Push Docker Image
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -96,9 +84,7 @@ jobs:
             BUILD_DATE=${{ env.BUILD_DATE }}
             GIT_COMMIT=${{ github.sha }}
 
-      # ---------------------------
       # 7️⃣ Verify Required Secrets
-      # ---------------------------
       - name: Verify Required Secrets
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -115,9 +101,7 @@ jobs:
           echo "🏷️ Build Tag: ${{ env.BUILD_TAG }}"
           echo "📅 Build Date: ${{ env.BUILD_DATE }}"
 
-      # ---------------------------
       # 8️⃣ Setup Docker on GCP VM
-      # ---------------------------
       - name: Setup Docker on GCP VM
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -144,9 +128,7 @@ jobs:
             fi
             docker --version || echo "⚠️ Docker command not available"
 
-      # ---------------------------
       # 9️⃣ Deploy to GCP VM
-      # ---------------------------
       - name: Deploy to GCP VM
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -164,15 +146,10 @@ jobs:
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
-
             echo "📦 Pulling Docker image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
             $DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
-
-            # Stop and remove old container
             $DOCKER_CMD stop calculator-app || true
             $DOCKER_CMD rm calculator-app || true
-
-            # Deploy new container
             $DOCKER_CMD run -d --name calculator-app --restart unless-stopped \
               -p 80:3000 \
               --memory=512m --cpus=1.0 \
@@ -185,9 +162,7 @@ jobs:
               --user 1001:1001 \
               sainadh99/calculator-app:${{ env.BUILD_TAG }}
 
-      # ---------------------------
       # 🔟 Health Check
-      # ---------------------------
       - name: Health Check
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -202,16 +177,15 @@ jobs:
             fi
             sleep 10
           done
-          
+
           if [ "$HEALTH_CHECK_PASSED" = true ]; then
             echo "✅ App is running!"
           else
             echo "⚠️ App not responding after 5 attempts."
             exit 1
+          fi
 
-      # ---------------------------
       # 1️⃣1️⃣ Container Maintenance
-      # ---------------------------
       - name: Container Maintenance
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
@@ -229,7 +203,6 @@ jobs:
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
-
             echo "🧹 Cleaning up old containers and images..."
             $DOCKER_CMD container prune -f
             OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +4 | awk '{print $1}')
@@ -243,9 +216,7 @@ jobs:
             echo "✅ Container maintenance completed"
             $DOCKER_CMD system df
 
-      # ---------------------------
       # 1️⃣2️⃣ Deployment Success Notification
-      # ---------------------------
       - name: Deployment Success Notification
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
