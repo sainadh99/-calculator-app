@@ -8,7 +8,7 @@ const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 
 const app = express();
-const port = 80; // Serve on port 80 for direct access via http://IP
+const port = process.env.PORT || 3000; // Changed to use environment variable with fallback to 3000
 
 // --- Helmet security (relaxed for IP access) ---
 app.use(helmet({
@@ -56,6 +56,40 @@ app.use((req, res, next) => {
   next();
 });
 
+// --- Health check endpoint (for Docker health checks) ---
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// --- Build info endpoint ---
+app.get('/build-info', (req, res) => {
+  try {
+    const buildInfo = require('./build-info.js');
+    res.json({
+      ...buildInfo,
+      timestamp: new Date().toISOString(),
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      uptime: process.uptime()
+    });
+  } catch (error) {
+    // Fallback if build-info.js doesn't exist
+    res.json({ 
+      error: 'Build info not available',
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // --- Calculator POST API ---
 app.post('/calculate', [
   body('operation').isIn(['add', 'subtract', 'multiply', 'divide']),
@@ -98,14 +132,69 @@ app.get('/history', (req, res) => {
   });
 });
 
+// --- Root endpoint ---
+app.get('/', (req, res) => {
+  // If you have an index.html in public folder, it will be served automatically
+  // Otherwise, send a simple response
+  res.sendFile(path.join(__dirname, 'public', 'index.html'), (err) => {
+    if (err) {
+      res.json({ 
+        message: 'Calculator API is running!', 
+        endpoints: {
+          '/': 'This endpoint',
+          '/health': 'Health check',
+          '/build-info': 'Build information',
+          '/calculate': 'POST - Perform calculations',
+          '/history': 'GET - Calculation history'
+        }
+      });
+    }
+  });
+});
+
 // --- Error Handler ---
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// --- Start HTTP server ---
-app.listen(port, () => {
-  console.log(`🚀 Calculator app running at http://0.0.0.0:${port}`);
+// --- Graceful shutdown ---
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  db.close((err) => {
+    if (err) {
+      console.error('Error closing database:', err);
+    } else {
+      console.log('📊 Database connection closed.');
+    }
+    process.exit(0);
+  });
 });
 
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT received, shutting down gracefully...');
+  db.close((err) => {
+    if (err) {
+      console.error('Error closing database:', err);
+    } else {
+      console.log('📊 Database connection closed.');
+    }
+    process.exit(0);
+  });
+});
+
+// --- Start HTTP server ---
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 Calculator app running at http://0.0.0.0:${port}`);
+  console.log(`📊 Database: ${dbPath}`);
+  console.log(`📁 Data directory: ${dataDir}`);
+  
+  // Try to load and display build info
+  try {
+    const buildInfo = require('./build-info.js');
+    console.log(`🏷️ Build: #${buildInfo.buildNumber} (${buildInfo.buildDate})`);
+    console.log(`🔗 Commit: ${buildInfo.gitCommit}`);
+  } catch (error) {
+    console.log('ℹ️ Build info not available (development mode)');
+  }
+});
