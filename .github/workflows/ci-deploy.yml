@@ -12,16 +12,17 @@ jobs:
   ci-deploy:
     runs-on: ubuntu-latest
     if: |
-      ( github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize') ) ||
-      ( github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99' ) ||
-      github.event_name == 'workflow_dispatch'
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')) ||
+      (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/master')
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: PR CI Check
-        if: github.event.action == 'opened' || github.event.action == 'synchronize'
+        if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')
         run: |
           echo "🔹 PR #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
           echo "🔍 Running CI checks..."
@@ -89,7 +90,9 @@ jobs:
           echo "📅 Build Date: ${{ env.BUILD_DATE }}"
 
       - name: Setup Docker on GCP VM
-        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99'
+        if: |
+          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/master')
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
@@ -223,7 +226,7 @@ jobs:
           echo "📅 Build Date: ${{ env.BUILD_DATE }}"
           echo "🌐 URL: http://${{ secrets.GCP_VM_HOST }}"
           echo "👤 Deployed by: ${{ github.event.pull_request.merged_by.login || github.actor }}"
-          echo "📝 PR: #${{ github.event.pull_request.number || 'N/A' }} - ${{ github.event.pull_request.title || 'Direct commit' }}"
+          echo "📝 PR: #${{ github.event.pull_request.number || 'N/A' }} - ${{ github.event.pull_request.title || 'Direct Commit' }}"
           echo "🔗 Commit: ${{ github.sha }}"
           echo "════════════════════════════════════════"
           echo ""
