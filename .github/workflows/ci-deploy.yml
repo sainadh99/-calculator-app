@@ -19,7 +19,7 @@ jobs:
 
     steps:
       # ---------------------------
-      # 1️⃣ Checkout code
+      # 1️⃣ Checkout code (Always runs)
       # ---------------------------
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,14 +36,15 @@ jobs:
           echo " - Running linting (if configured)"
           echo " - Running tests (if configured)"
           echo "✅ CI checks completed successfully"
+          echo ""
           echo "ℹ️ Deployment will only occur when merged by 'sainadh99' or pushed to master"
 
       # ---------------------------
-      # 3️⃣ Generate Build Metadata
+      # 3️⃣ Generate Build Metadata (For deployments only)
       # ---------------------------
       - name: Generate Build Number & Metadata
         if: |
-          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
+          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && github.event.pull_request.merged_by.login == 'sainadh99') ||
           (github.event_name == 'push' && github.ref == 'refs/heads/master')
         id: build_number
         run: |
@@ -53,12 +54,18 @@ jobs:
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+          
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "🎯 Deployment authorized - PR merged by sainadh99"
+          else
+            echo "🎯 Deployment authorized - Direct push to master"
+          fi
           echo "🔢 Build Number: $BUILD_NUMBER"
           echo "🏷️ Build Tag: $BUILD_TAG"
           echo "📅 Build Date: $BUILD_DATE"
 
       # ---------------------------
-      # 4️⃣ Set up Docker Buildx
+      # 4️⃣ Set up Docker Buildx (For deployments only)
       # ---------------------------
       - name: Set up Docker Buildx
         if: |
@@ -67,7 +74,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ---------------------------
-      # 5️⃣ Docker Login
+      # 5️⃣ Docker Login (For deployments only)
       # ---------------------------
       - name: Docker Login
         if: |
@@ -79,7 +86,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # ---------------------------
-      # 6️⃣ Build & Push Docker Image
+      # 6️⃣ Build & Push Docker Image (For deployments only)
       # ---------------------------
       - name: Build & Push Docker Image
         if: |
@@ -100,7 +107,21 @@ jobs:
             GIT_COMMIT=${{ github.sha }}
 
       # ---------------------------
-      # 7️⃣ Verify Required Secrets
+      # 6️⃣a Docker Security Scan
+      # ---------------------------
+      - name: Docker Security Scan (Trivy)
+        if: |
+          (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/master')
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: sainadh99/calculator-app:${{ env.BUILD_TAG }}
+          format: table
+          exit-code: 1
+          severity: HIGH,CRITICAL
+
+      # ---------------------------
+      # 7️⃣ Verify Required Secrets (For deployments only)
       # ---------------------------
       - name: Verify Required Secrets
         if: |
@@ -113,9 +134,13 @@ jobs:
           echo "GCP_VM_KEY: ${{ secrets.GCP_VM_KEY != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
           echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
+          echo ""
+          echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
+          echo "🏷️ Build Tag: ${{ env.BUILD_TAG }}"
+          echo "📅 Build Date: ${{ env.BUILD_DATE }}"
 
       # ---------------------------
-      # 8️⃣ Setup Docker on GCP VM
+      # 8️⃣ Setup Docker on GCP VM (For deployments only)
       # ---------------------------
       - name: Setup Docker on GCP VM
         if: |
@@ -144,7 +169,7 @@ jobs:
             docker --version || echo "⚠️ Docker command not available"
 
       # ---------------------------
-      # 9️⃣ Deploy to GCP VM
+      # 9️⃣ Deploy to GCP VM (For deployments only)
       # ---------------------------
       - name: Deploy to GCP VM
         if: |
@@ -193,61 +218,37 @@ jobs:
             echo "✅ Container deployed successfully"
 
       # ---------------------------
-      # 🔟 Health Check
+      # 🔟 Health Check (For deployments only)
       # ---------------------------
       - name: Health Check
         if: |
           (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged_by.login == 'sainadh99') ||
           (github.event_name == 'push' && github.ref == 'refs/heads/master')
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.GCP_VM_HOST }}
-          username: ${{ secrets.GCP_VM_USERNAME }}
-          key: ${{ secrets.GCP_VM_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 5m
-          script: |
-            DOCKER_CMD="docker"
-            if ! $DOCKER_CMD info >/dev/null 2>&1; then
-              DOCKER_CMD="sudo docker"
+        run: |
+          HEALTH_CHECK_PASSED=false
+          echo "🏥 Starting health checks for Calculator App..."
+          
+          for i in {1..5}; do
+            echo "🔍 Health check attempt $i/5"
+            if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
+              HEALTH_CHECK_PASSED=true
+              break
             fi
-
-            HEALTH_CHECK_PASSED=false
-            echo "🏥 Starting health checks for Calculator App..."
-
-            for i in {1..5}; do
-              echo "🔍 Health check attempt $i/5"
-
-              # Check container status
-              if $DOCKER_CMD ps --filter "name=calculator-app" --filter "status=running" --format "{{.Names}}" | grep -q "calculator-app"; then
-                
-                # Check if SQLite DB file exists
-                DB_PATH=$($DOCKER_CMD volume inspect calc-data --format '{{ .Mountpoint }}/calc-history.db')
-                if [ -f "$DB_PATH" ]; then
-                  HEALTH_CHECK_PASSED=true
-                  echo "✅ Container is running and SQLite DB is present"
-                  break
-                else
-                  echo "⚠️ SQLite DB file not found yet: $DB_PATH"
-                fi
-              else
-                echo "⚠️ Container not running yet"
-              fi
-
+            if [ $i -lt 5 ]; then
               echo "⏳ Waiting 10 seconds before retry..."
               sleep 10
-            done
-
-            if [ "$HEALTH_CHECK_PASSED" = true ]; then
-              echo "🎉 Health check passed!"
-            else
-              echo "❌ App failed health check after 5 attempts"
-              exit 1
             fi
+          done
+
+          if [ "$HEALTH_CHECK_PASSED" = true ]; then
+            echo "✅ App is running!"
+          else
+            echo "⚠️ App not responding after 5 attempts."
+            exit 1
+          fi
 
       # ---------------------------
-      # 1️⃣1️⃣ Container Maintenance
+      # 1️⃣1️⃣ Container Maintenance (For deployments only)
       # ---------------------------
       - name: Container Maintenance
         if: |
@@ -277,10 +278,11 @@ jobs:
             $DOCKER_CMD image prune -f
             $DOCKER_CMD system prune -f --volumes=false
             echo "✅ Container maintenance completed"
+            echo "📊 Disk usage after cleanup:"
             $DOCKER_CMD system df
 
       # ---------------------------
-      # 1️⃣2️⃣ Deployment Success Notification
+      # 1️⃣2️⃣ Deployment Success Notification (For deployments only)
       # ---------------------------
       - name: Deployment Success Notification
         if: |
@@ -288,6 +290,7 @@ jobs:
           (github.event_name == 'push' && github.ref == 'refs/heads/master')
         run: |
           echo "🎉 DEPLOYMENT SUCCESSFUL!"
+          echo "════════════════════════════════════════"
           echo "📦 Application: Calculator App"
           echo "🏷️ Version: ${{ env.BUILD_TAG }}"
           echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
@@ -301,7 +304,14 @@ jobs:
             echo "📝 Trigger: Direct push to master"
           fi
           echo "🔗 Commit: ${{ github.sha }}"
+          echo "════════════════════════════════════════"
+          echo ""
           echo "✅ All deployment stages completed successfully!"
           echo "🔍 Health checks passed"
           echo "🧹 Container maintenance completed"
           echo "💾 Persistent data preserved"
+          echo ""
+          echo "Next steps:"
+          echo "- Monitor application at http://${{ secrets.GCP_VM_HOST }}"
+          echo "- Check logs if needed: docker logs calculator-app"
+          echo "- View container status: docker ps"
