@@ -6,7 +6,7 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  DOCKER_CONTENT_TRUST: 1  # Enabled for build/push
+  DOCKER_CONTENT_TRUST: 1  # Only for build & push
 
 jobs:
   deploy:
@@ -61,6 +61,7 @@ jobs:
           context: .
           push: true
           tags: |
+            sainadh99/calculator-app:latest
             sainadh99/calculator-app:${{ env.BUILD_TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -80,15 +81,37 @@ jobs:
           key: ${{ secrets.GCP_VM_KEY }}
           port: 22
           timeout: 60s
-          command_timeout: 15m
+          command_timeout: 20m
           script: |
-            export DOCKER_CONTENT_TRUST=0  # Disable DCT for remote pull
+            export DOCKER_CONTENT_TRUST=0
+            export HOME=/home/${{ secrets.GCP_VM_USERNAME }}
 
             DOCKER_CMD="docker"
             if ! $DOCKER_CMD info >/dev/null 2>&1; then
               DOCKER_CMD="sudo docker"
             fi
 
+            # ---------------------------
+            # Copy seccomp.json to VM
+            # ---------------------------
+            echo "📄 Copying seccomp.json to VM..."
+            mkdir -p /home/${{ secrets.GCP_VM_USERNAME }}/docker-seccomp
+            cat << 'EOF' > /home/${{ secrets.GCP_VM_USERNAME }}/docker-seccomp/seccomp.json
+            {
+              "defaultAction": "SCMP_ACT_ERRNO",
+              "syscalls": [
+                {
+                  "names": ["accept", "accept4", "access", "alarm", "bind", "brk"],
+                  "action": "SCMP_ACT_ALLOW"
+                }
+              ]
+            }
+            EOF
+            echo "✅ seccomp.json copied to VM"
+
+            # ---------------------------
+            # Pull & run container
+            # ---------------------------
             echo "📦 Pulling Docker image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
             $DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
 
@@ -96,11 +119,13 @@ jobs:
             $DOCKER_CMD stop calculator-app || true
             $DOCKER_CMD rm calculator-app || true
 
+            # Persistent volume
             if ! $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1; then
               echo "📁 Creating persistent Docker volume: calc-data"
               $DOCKER_CMD volume create calc-data
             fi
 
+            # Restricted network
             if ! $DOCKER_CMD network inspect calc-network >/dev/null 2>&1; then
               echo "🌐 Creating restricted Docker network: calc-network"
               $DOCKER_CMD network create --driver bridge \
@@ -114,8 +139,8 @@ jobs:
             $DOCKER_CMD run -d --name calculator-app --restart unless-stopped \
               --network calc-network \
               -p 80:3000 \
-              --memory=256m --memory-swap=256m --memory-reservation=128m \
-              --cpus=0.5 --cpu-shares=256 \
+              --memory=256m --memory-swap=256m \
+              --cpus=0.5 \
               --pids-limit=50 \
               --ulimit nofile=1024:1024 \
               --ulimit nproc=50:50 \
@@ -124,7 +149,7 @@ jobs:
               --tmpfs /tmp:rw,noexec,nosuid,nodev,size=20m \
               --tmpfs /var/tmp:rw,noexec,nosuid,nodev,size=10m \
               --security-opt no-new-privileges:true \
-              --security-opt seccomp=/usr/src/app/docker/seccomp.json \
+              --security-opt seccomp=/home/${{ secrets.GCP_VM_USERNAME }}/docker-seccomp/seccomp.json \
               --security-opt apparmor:docker-default \
               --cap-drop ALL \
               --cap-add CHOWN \
@@ -154,13 +179,18 @@ jobs:
         run: |
           HEALTH_CHECK_PASSED=false
           for i in {1..5}; do
+            echo "🔍 Health check attempt $i/5"
             if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
+              echo "✅ App is running!"
               HEALTH_CHECK_PASSED=true
               break
             fi
             sleep 15
           done
-          if [ "$HEALTH_CHECK_PASSED" = false ]; then exit 1; fi
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "❌ Health checks failed after 5 attempts."
+            exit 1
+          fi
 
       # ---------------------------
       # 8️⃣ Container Maintenance
@@ -202,9 +232,8 @@ jobs:
           echo "🔒 SECURITY FEATURES ENABLED:"
           echo "  ✅ Non-root user (1001:1001)"
           echo "  ✅ Read-only root filesystem"
-          echo "  ✅ All capabilities dropped except essential ones"
+          echo "  ✅ Seccomp profile enforced"
+          echo "  ✅ All capabilities dropped except essential"
           echo "  ✅ Resource limits: 256MB RAM, 0.5 CPU, 50 PIDs"
           echo "  ✅ Network isolation with custom bridge"
-          echo "  ✅ tmpfs for sensitive dirs"
-          echo "  ✅ Seccomp profile applied"
-          echo "  ✅ Docker Content Trust enabled for build/push"
+          echo "✅ Deployment completed successfully"
