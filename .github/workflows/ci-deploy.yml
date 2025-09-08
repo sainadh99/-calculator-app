@@ -175,12 +175,13 @@ jobs:
             fi
             sleep 10
           done
-          
+
           if [ "$HEALTH_CHECK_PASSED" = true ]; then
             echo "✅ App is running!"
           else
             echo "⚠️ App not responding after 10 attempts."
             exit 1
+        shell: bash
 
       - name: Container Maintenance
         if: |
