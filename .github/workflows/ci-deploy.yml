@@ -167,8 +167,8 @@ jobs:
           (github.event_name == 'push' && github.ref == 'refs/heads/master')
         run: |
           HEALTH_CHECK_PASSED=false
-          for i in {1..10}; do
-            echo "🔍 Health check attempt $i/10"
+          for i in {1..5}; do
+            echo "🔍 Health check attempt $i/5"
             if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
               HEALTH_CHECK_PASSED=true
               break
@@ -179,7 +179,7 @@ jobs:
           if [ "$HEALTH_CHECK_PASSED" = true ]; then
             echo "✅ App is running!"
           else
-            echo "⚠️ App not responding after 10 attempts."
+            echo "⚠️ App not responding after 5 attempts."
             exit 1
         shell: bash
 
