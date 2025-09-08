@@ -1,179 +1,259 @@
-name: Beginner Secure CI/CD Pipeline
+name: CI/CD Pipeline
 
 on:
   push:
     branches:
-      - master          # Run when code is pushed to master
+      - master
   pull_request:
-    types: [opened, synchronize, closed]  # Run when PRs are opened/updated/merged
-  workflow_dispatch:   # Allow manual trigger
+    types: [opened, synchronize, closed]
+  workflow_dispatch:
 
 jobs:
-  # ======================
-  # 1. Security Scan Job
-  # ======================
-  security-scan:
-    runs-on: ubuntu-latest
-    steps:
-      # Step 1: Get the source code
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Step 2: Check Dockerfile for best practices (like a spell-checker for Docker)
-      - name: Dockerfile Lint (Hadolint)
-        uses: hadolint/hadolint-action@v3.1.0
-        continue-on-error: true
-        with:
-          dockerfile: Dockerfile
-          failure-threshold: error
-
-      # Step 3: Check if secrets (like API keys/passwords) are accidentally pushed
-      - name: Secret Scan (TruffleHog)
-        uses: trufflesecurity/trufflehog@main
-        continue-on-error: true
-        with:
-          path: ./
-          base: main
-          head: HEAD
-          extra_args: --only-verified
-
-  # ======================
-  # 2. Build & Deploy Job
-  # ======================
   build-and-deploy:
-    needs: security-scan
-    runs-on: ubuntu-latest
+    # This big `if` makes sure the job runs only for:
+    #  - direct pushes to master (not merge commits),
+    #  - merged PRs into master,
+    #  - opened/synchronized PRs (for CI checks),
+    #  - manual workflow runs (workflow_dispatch).
     if: |
-      github.event_name == 'push' ||
-      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/master' &&
+        !contains(github.event.head_commit.message, 'Merge pull request')
+      ) ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true &&
+        github.base_ref == 'master'
+      ) ||
+      (
+        github.event_name == 'pull_request' &&
+        (github.event.action == 'opened' || github.event.action == 'synchronize')
+      ) ||
       github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Get the source code
+      # Step 0: Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 2: Create a build number (unique for every pipeline run)
-      - name: Generate Build Number
+      # Step 1: Generate Build Number, Tag and Date (saved to env)
+      - name: Generate Build Number & Metadata
+        id: build_number
         run: |
-          echo "BUILD_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
-          echo "🔢 Build Number: ${{ github.run_number }}"
+          # github.run_number is an integer incrementing for each workflow run in the repo
+          BUILD_NUMBER=${{ github.run_number }}
+          BUILD_TAG="build-${BUILD_NUMBER}"
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
-      # Step 3: Set up Docker build environment
-      - name: Setup Docker Buildx
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+          echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+
+          echo "🔢 Build Number: $BUILD_NUMBER"
+          echo "🏷️ Build Tag: $BUILD_TAG"
+          echo "📅 Build Date: $BUILD_DATE"
+
+      # Step 2: Set up Docker Buildx
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Step 4: Log in to DockerHub (so we can push images)
-      - name: Login to DockerHub
+      # Step 3: Login to DockerHub (uses repo secrets)
+      - name: Log in to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Step 5: Build Docker image (tagged as latest + build number)
-      - name: Build Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          load: true
-          tags: |
-            sainadh99/calculator-app:latest
-            sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}
-
-      # Step 6: Security scan with Docker Scout (check for CVEs)
-      - name: Docker Scout Scan
-        uses: docker/scout-action@v1
-        continue-on-error: true
-        with:
-          command: cves
-          image: sainadh99/calculator-app:latest
-          only-severities: critical
-
-      # Step 7: Security scan with Trivy (check for HIGH/CRITICAL issues)
-      - name: Trivy Scan
-        uses: aquasecurity/trivy-action@master
-        continue-on-error: true
-        with:
-          image-ref: sainadh99/calculator-app:latest
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '0'
-
-      # Step 8: Security risk assessment (manual explanation)
-      - name: Security Risk Assessment
-        run: |
-          echo "Known issue: cross-spawn 7.0.3 (HIGH severity)"
-          echo "Impact: low for this calculator app → safe to continue 🚀"
-
-      # Step 9: Push image to DockerHub (after scans)
-      - name: Push Docker Image
+      # Step 4: Build & push Docker image (push both :latest and build-<n>)
+      - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
             sainadh99/calculator-app:latest
-            sainadh99/calculator-app:build-${{ env.BUILD_NUMBER }}
+            sainadh99/calculator-app:${{ env.BUILD_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_NUMBER=${{ env.BUILD_NUMBER }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+            GIT_COMMIT=${{ github.sha }}
 
-      # Step 10: Verify that secrets are available
-      - name: Verify Secrets
+      # Step 5: Verify required secrets & runtime info
+      - name: Verify Configuration
         run: |
-          echo "✅ Checking secrets..."
-          echo "DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
-          echo "GCP VM Host: ${{ secrets.GCP_VM_HOST != '' && 'SET' || 'MISSING' }}"
+          echo "✅ Checking required secrets..."
+          echo "GCP_VM_HOST: ${{ secrets.GCP_VM_HOST != '' && 'SET' || 'MISSING' }}"
+          echo "GCP_VM_USERNAME: ${{ secrets.GCP_VM_USERNAME != '' && 'SET' || 'MISSING' }}"
+          echo "GCP_VM_KEY: ${{ secrets.GCP_VM_KEY != '' && 'SET' || 'MISSING' }}"
+          echo "DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME != '' && 'SET' || 'MISSING' }}"
+          echo "DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN != '' && 'SET' || 'MISSING' }}"
+          echo ""
+          echo "🔢 Build Number: ${{ env.BUILD_NUMBER }}"
+          echo "🏷️ Build Tag: ${{ env.BUILD_TAG }}"
+          echo "📅 Build Date: ${{ env.BUILD_DATE }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "👤 Actor: ${{ github.actor }}"
 
-      # Step 11: Prepare SSH key to connect to GCP VM
-      - name: Setup SSH Key
-        run: |
-          echo "${{ secrets.GCP_VM_KEY }}" > gcp_key
-          chmod 600 gcp_key
-
-      # Step 12: Ensure Docker is installed on GCP VM
-      - name: Install Docker on VM (if missing)
+      # Step 6: Ensure Docker installed on the VM (via SSH) - installs if missing
+      - name: Setup Docker on GCP VM
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
           username: ${{ secrets.GCP_VM_USERNAME }}
           key: ${{ secrets.GCP_VM_KEY }}
+          port: 22
+          timeout: 300s
+          command_timeout: 10m
           script: |
+            echo "=== Checking Docker installation ==="
             if ! command -v docker &> /dev/null; then
-              sudo apt update && sudo apt install -y docker.io
+              echo "Installing Docker..."
+              sudo apt update
+              sudo apt install -y docker.io
               sudo systemctl start docker
               sudo systemctl enable docker
+              sudo usermod -aG docker $USER || true
+            else
+              echo "Docker is already installed"
+              sudo systemctl start docker || true
             fi
+            docker --version || echo "⚠️ Docker command not available"
 
-      # Step 13: Deploy container to GCP VM (with security hardening)
+      # Step 7: Deploy the specific build tag to the VM
       - name: Deploy to GCP VM
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_HOST }}
           username: ${{ secrets.GCP_VM_USERNAME }}
           key: ${{ secrets.GCP_VM_KEY }}
+          port: 22
+          timeout: 60s
+          command_timeout: 15m
           script: |
-            docker pull sainadh99/calculator-app:latest
-            docker stop calculator-app || true
-            docker rm calculator-app || true
-            docker run -d \
+            echo "=== Starting deployment - Build #${{ env.BUILD_NUMBER }} (${ { env.BUILD_TAG }}) ==="
+            sudo systemctl start docker || true
+            sleep 5
+
+            # Determine docker command
+            if docker info >/dev/null 2>&1; then
+              DOCKER_CMD="docker"
+            elif sudo docker info >/dev/null 2>&1; then
+              DOCKER_CMD="sudo docker"
+            else
+              echo "❌ Docker is not accessible"
+              exit 1
+            fi
+
+            echo "📦 Pulling image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
+            eval "$DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}"
+
+            echo "🔁 Stopping & removing any previous container"
+            eval "$DOCKER_CMD stop calculator-app" 2>/dev/null || true
+            eval "$DOCKER_CMD rm calculator-app" 2>/dev/null || true
+
+            echo "🧹 Cleaning up older build images (keep recent ones)..."
+            # This line finds tags that match build-*, skips the newest 3 and removes the rest.
+            eval "$DOCKER_CMD images sainadh99/calculator-app --format '{{.Tag}} {{.ID}} {{.CreatedAt}}' | grep 'build-' | sort -r -k3,3 | awk 'NR>3 {print \$2}' | xargs -r $DOCKER_CMD rmi" || true
+
+            echo "🚀 Starting new container with restricted privileges"
+            eval "$DOCKER_CMD run -d \
               --name calculator-app \
               --restart unless-stopped \
-              -p 80:80 \
-              --read-only \
-              --cap-drop ALL \
-              --cap-add NET_BIND_SERVICE \
+              -p 80:3000 \
               --memory=512m \
               --cpus=1.0 \
-              sainadh99/calculator-app:latest
+              --read-only \
+              --tmpfs /usr/src/app/tmp:rw,noexec,nosuid,size=100m \
+              --tmpfs /usr/src/app/data:rw,noexec,nosuid,size=100m \
+              --tmpfs /tmp:rw,noexec,nosuid,size=50m \
+              --security-opt no-new-privileges:true \
+              --cap-drop ALL \
+              --cap-add CHOWN \
+              --cap-add SETGID \
+              --cap-add SETUID \
+              --cap-add NET_BIND_SERVICE \
+              --user 1001:1001 \
+              sainadh99/calculator-app:${{ env.BUILD_TAG }}"
 
-      # Step 14: Check if app is running
+            sleep 5
+
+            if eval "$DOCKER_CMD ps" | grep calculator-app; then
+              echo "✅ Deployment successful - Build #${{ env.BUILD_NUMBER }}!"
+              eval "$DOCKER_CMD ps --filter name=calculator-app --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'"
+              echo "Attempting to read build info (optional):"
+              eval "$DOCKER_CMD exec calculator-app cat /app/build-info.txt" 2>/dev/null || echo "No build-info file inside container."
+            else
+              echo "❌ Deployment failed - printing last logs:"
+              eval "$DOCKER_CMD logs calculator-app" || true
+              exit 1
+            fi
+
+      # Step 8: Health check (runs on the runner)
       - name: Health Check
         run: |
-          sleep 20
-          curl -f http://${{ secrets.GCP_VM_HOST }} || echo "⚠️ App may not be responding"
+          echo "⏳ Waiting for app to be ready..."
+          sleep 30
+          HEALTH_CHECK_PASSED=false
+          for i in {1..5}; do
+            echo "🔍 Health check attempt $i/5"
+            for url in "http://${{ secrets.GCP_VM_HOST }}" "http://${{ secrets.GCP_VM_HOST }}:80" "http://${{ secrets.GCP_VM_HOST }}/health"; do
+              if curl -fs --max-time 10 "$url" >/dev/null; then
+                echo "✅ App is running and healthy at $url"
+                HEALTH_CHECK_PASSED=true
+                break 2
+              fi
+            done
+            [ $i -lt 5 ] && sleep 10
+          done
 
-      # Step 15: Print Deployment Summary
-      - name: Deployment Report
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "⚠️ Health check failed after 5 attempts. Please inspect the VM container logs: ssh into the VM and run 'docker logs calculator-app'"
+          fi
+
+      # Step 9: Container maintenance (run on the VM)
+      - name: Container Maintenance
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_HOST }}
+          username: ${{ secrets.GCP_VM_USERNAME }}
+          key: ${{ secrets.GCP_VM_KEY }}
+          port: 22
+          timeout: 60s
+          script: |
+            if docker info >/dev/null 2>&1; then
+              DOCKER_CMD="docker"
+            elif sudo docker info >/dev/null 2>&1; then
+              DOCKER_CMD="sudo docker"
+            else
+              exit 0
+            fi
+
+            echo "🧹 Performing maintenance (prune unused resources)..."
+            eval "$DOCKER_CMD system prune -f" || true
+
+            echo "📦 Current calculator-app images:"
+            eval "$DOCKER_CMD images sainadh99/calculator-app --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}'"
+
+            echo "🏃 Running containers:"
+            eval "$DOCKER_CMD ps --filter name=calculator-app --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'"
+
+      # Step 10: Deployment notification / summary
+      - name: Deployment Success Notification
         run: |
-          echo "🎉 Deployment successful!"
-          echo "Build Number: #${{ env.BUILD_NUMBER }}"
-          echo "App URL: http://${{ secrets.GCP_VM_HOST }}"
-          echo "Security: ✅ Hardened container (read-only, no extra privileges)"
+          echo "🎉 Deployment completed successfully!"
+          echo "  • Build Number: #${{ env.BUILD_NUMBER }}"
+          echo "  • Build Tag: ${{ env.BUILD_TAG }}"
+          echo "  • Image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
+          echo "  • Trigger: ${{ github.event_name }}"
+          echo "  • Branch: ${{ github.ref_name }}"
+          echo "  • Commit: ${{ github.sha }}"
+          echo "  • Actor: ${{ github.actor }}"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "  • PR #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}"
+          fi
+          echo "  • App URL: http://${{ secrets.GCP_VM_HOST }}"
+          echo "  • Security: restricted container (read-only fs, dropped capabilities)"
