@@ -9,8 +9,6 @@ on:
   workflow_dispatch:
 
 env:
-  # Security configurations
-  DOCKER_CONTENT_TRUST: 1
   DOCKER_BUILDKIT: 1
 
 jobs:
