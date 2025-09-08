@@ -6,7 +6,7 @@ on:
 
 env:
   DOCKER_BUILDKIT: 1
-  DOCKER_CONTENT_TRUST: 1  # Only for build & push
+  DOCKER_CONTENT_TRUST: 1  # Only for local build & push
 
 jobs:
   deploy:
@@ -32,10 +32,6 @@ jobs:
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
           echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-          echo "🎯 Deployment authorized - PR #${{ github.event.pull_request.number }} merged by sainadh99"
-          echo "🔢 Build Number: $BUILD_NUMBER"
-          echo "🏷️ Build Tag: $BUILD_TAG"
-          echo "📅 Build Date: $BUILD_DATE"
 
       # ---------------------------
       # 3️⃣ Set up Docker Buildx
@@ -83,6 +79,7 @@ jobs:
           timeout: 60s
           command_timeout: 20m
           script: |
+            # Disable Docker Content Trust for remote
             export DOCKER_CONTENT_TRUST=0
             export HOME=/home/${{ secrets.GCP_VM_USERNAME }}
 
@@ -91,12 +88,9 @@ jobs:
               DOCKER_CMD="sudo docker"
             fi
 
-            # ---------------------------
-            # Copy seccomp.json to VM
-            # ---------------------------
-            echo "📄 Copying seccomp.json to VM..."
-            mkdir -p /home/${{ secrets.GCP_VM_USERNAME }}/docker-seccomp
-            cat << 'EOF' > /home/${{ secrets.GCP_VM_USERNAME }}/docker-seccomp/seccomp.json
+            # Copy seccomp profile
+            mkdir -p $HOME/docker-seccomp
+            cat << 'EOF' > $HOME/docker-seccomp/seccomp.json
             {
               "defaultAction": "SCMP_ACT_ERRNO",
               "syscalls": [
@@ -107,27 +101,19 @@ jobs:
               ]
             }
             EOF
-            echo "✅ seccomp.json copied to VM"
 
-            # ---------------------------
-            # Pull & run container
-            # ---------------------------
-            echo "📦 Pulling Docker image: sainadh99/calculator-app:${{ env.BUILD_TAG }}"
+            # Pull and stop previous container
             $DOCKER_CMD pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
-
-            echo "🛑 Stopping old container (if exists)"
             $DOCKER_CMD stop calculator-app || true
             $DOCKER_CMD rm calculator-app || true
 
-            # Persistent volume
+            # Create persistent volume
             if ! $DOCKER_CMD volume inspect calc-data >/dev/null 2>&1; then
-              echo "📁 Creating persistent Docker volume: calc-data"
               $DOCKER_CMD volume create calc-data
             fi
 
-            # Restricted network
+            # Create restricted network
             if ! $DOCKER_CMD network inspect calc-network >/dev/null 2>&1; then
-              echo "🌐 Creating restricted Docker network: calc-network"
               $DOCKER_CMD network create --driver bridge \
                 --opt com.docker.network.bridge.name=calc-br \
                 --opt com.docker.network.bridge.enable_icc=false \
@@ -135,7 +121,7 @@ jobs:
                 calc-network
             fi
 
-            echo "▶️ Starting new secure container"
+            # Run secure container
             $DOCKER_CMD run -d --name calculator-app --restart unless-stopped \
               --network calc-network \
               -p 80:3000 \
@@ -149,7 +135,7 @@ jobs:
               --tmpfs /tmp:rw,noexec,nosuid,nodev,size=20m \
               --tmpfs /var/tmp:rw,noexec,nosuid,nodev,size=10m \
               --security-opt no-new-privileges:true \
-              --security-opt seccomp=/home/${{ secrets.GCP_VM_USERNAME }}/docker-seccomp/seccomp.json \
+              --security-opt seccomp=$HOME/docker-seccomp/seccomp.json \
               --security-opt apparmor:docker-default \
               --cap-drop ALL \
               --cap-add CHOWN \
@@ -170,8 +156,6 @@ jobs:
               -v calc-data:/usr/src/app/data:rw \
               sainadh99/calculator-app:${{ env.BUILD_TAG }}
 
-            echo "✅ Secure container deployed successfully"
-
       # ---------------------------
       # 7️⃣ Health Check
       # ---------------------------
@@ -179,18 +163,14 @@ jobs:
         run: |
           HEALTH_CHECK_PASSED=false
           for i in {1..5}; do
-            echo "🔍 Health check attempt $i/5"
             if curl -fs --max-time 10 "http://${{ secrets.GCP_VM_HOST }}" >/dev/null; then
-              echo "✅ App is running!"
               HEALTH_CHECK_PASSED=true
               break
             fi
             sleep 15
           done
           if [ "$HEALTH_CHECK_PASSED" = false ]; then
-            echo "❌ Health checks failed after 5 attempts."
             exit 1
-          fi
 
       # ---------------------------
       # 8️⃣ Container Maintenance
@@ -213,27 +193,14 @@ jobs:
             OLD_IMAGES=$($DOCKER_CMD images sainadh99/calculator-app --format "table {{.Repository}}:{{.Tag}}\t{{.CreatedAt}}" | tail -n +2 | sort -k2 -r | tail -n +3 | awk '{print $1}')
             if [ -n "$OLD_IMAGES" ]; then echo "$OLD_IMAGES" | xargs -r $DOCKER_CMD rmi || true; fi
             $DOCKER_CMD image prune -f
-            echo "💾 Preserving persistent data volume: calc-data"
 
       # ---------------------------
       # 9️⃣ Deployment Success Notification
       # ---------------------------
       - name: Deployment Success Notification
         run: |
-          echo "🎉 SECURE DEPLOYMENT SUCCESSFUL!"
-          echo "📦 App: Calculator App (Hardened)"
+          echo "🎉 Deployment successful!"
           echo "🏷️ Version: ${{ env.BUILD_TAG }}"
-          echo "🔢 Build: ${{ env.BUILD_NUMBER }}"
-          echo "📅 Date: ${{ env.BUILD_DATE }}"
+          echo "📦 App: Calculator App (Hardened)"
           echo "🌐 URL: http://${{ secrets.GCP_VM_HOST }}"
-          echo "👤 Deployed by: ${{ github.event.pull_request.merged_by.login }}"
-          echo "📝 PR: #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}"
-          echo "🔗 Commit: ${{ github.sha }}"
-          echo "🔒 SECURITY FEATURES ENABLED:"
-          echo "  ✅ Non-root user (1001:1001)"
-          echo "  ✅ Read-only root filesystem"
-          echo "  ✅ Seccomp profile enforced"
-          echo "  ✅ All capabilities dropped except essential"
-          echo "  ✅ Resource limits: 256MB RAM, 0.5 CPU, 50 PIDs"
-          echo "  ✅ Network isolation with custom bridge"
-          echo "✅ Deployment completed successfully"
+          echo "🔒 Security: Non-root, read-only FS, seccomp, limited resources"
