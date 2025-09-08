@@ -2,7 +2,7 @@ FROM node:18-alpine
 
 WORKDIR /usr/src/app
 
-# Copying package.json file
+# Copying package.json files
 COPY package*.json ./
 RUN npm install --only=production
 
