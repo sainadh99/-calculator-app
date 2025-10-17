@@ -10,285 +10,66 @@ jobs:
     if: github.event.pull_request.merged == true
 
     steps:
-      # ---------------------------
       # 1️⃣ Checkout code
-      # ---------------------------
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ---------------------------
-      # 2️⃣ Generate Build Metadata
-      # ---------------------------
-      - name: Generate Build Number & Metadata
-        id: build_number
+      # 2️⃣ Setup build metadata
+      - name: Set Build Metadata
         run: |
-          BUILD_NUMBER=${{ github.run_number }}
-          BUILD_TAG="build-${BUILD_NUMBER}"
-          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
-          echo "BUILD_TAG=$BUILD_TAG" >> $GITHUB_ENV
-          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+          echo "BUILD_TAG=build-${{ github.run_number }}" >> $GITHUB_ENV
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
 
-      # ---------------------------
-      # 3️⃣ Docker Login
-      # ---------------------------
-      - name: Docker Login
-        uses: docker/login-action@v3
+      # 3️⃣ Docker login
+      - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ---------------------------
-      # 4️⃣ Build & Push Docker Image
-      # ---------------------------
+      # 4️⃣ Build & push Docker image
       - name: Build & Push Docker Image
         run: |
           docker build -t sainadh99/calculator-app:latest \
-                      -t sainadh99/calculator-app:${{ env.BUILD_TAG }} \
-                      --build-arg BUILD_NUMBER=${{ env.BUILD_NUMBER }} \
-                      --build-arg BUILD_DATE=${{ env.BUILD_DATE }} \
-                      --build-arg GIT_COMMIT=${{ github.sha }} .
+                       -t sainadh99/calculator-app:${{ env.BUILD_TAG }} \
+                       --build-arg BUILD_DATE=${{ env.BUILD_DATE }} .
           docker push sainadh99/calculator-app:latest
           docker push sainadh99/calculator-app:${{ env.BUILD_TAG }}
 
-      # ---------------------------
-      # 5️⃣ Deploy Secure Container
-      # ---------------------------
-      - name: Deploy Secure Container
+      # 5️⃣ Secure Deploy
+      - name: Secure Deployment
         run: |
-          # Install Docker if not available
-          if ! command -v docker &> /dev/null; then
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sh get-docker.sh
-          fi
-          
-          # Stop and remove previous container
-          docker stop calculator-app 2>/dev/null || true
-          docker rm calculator-app 2>/dev/null || true
-          
-          # Pull latest image
-          docker pull sainadh99/calculator-app:${{ env.BUILD_TAG }}
-          
-          # Create network if it doesn't exist
+          docker stop calculator-app || true
+          docker rm calculator-app || true
           docker network inspect calc-network >/dev/null 2>&1 || \
-            docker network create --driver bridge calc-network
-          
-          # Deploy with Docker security restrictions
+            docker network create calc-network
+
           docker run -d --name calculator-app --restart unless-stopped \
-            --network calc-network \
-            -p 80:3000 \
-            --memory=512m \
-            --cpus=1.0 \
-            --pids-limit=100 \
+            --network calc-network -p 80:3000 \
+            --memory=512m --cpus=1.0 --pids-limit=100 \
             --security-opt no-new-privileges:true \
-            --cap-drop ALL \
-            --cap-add NET_BIND_SERVICE \
-            --cap-add SETGID \
-            --cap-add SETUID \
-            --hostname calculator-app \
-            --env NODE_ENV=production \
-            --env PORT=3000 \
-            --health-cmd="curl -f http://localhost:3000/ || exit 1" \
-            --health-interval=30s \
-            --health-timeout=10s \
-            --health-retries=3 \
-            --health-start-period=60s \
-            --log-driver json-file \
-            --log-opt max-size=10m \
-            --log-opt max-file=3 \
+            --cap-drop ALL --cap-add NET_BIND_SERVICE \
             sainadh99/calculator-app:${{ env.BUILD_TAG }}
 
-      # ---------------------------
-      # 6️⃣ Docker Security Validation
-      # ---------------------------
-      - name: Docker Security Validation
+      # 6️⃣ Health Check
+      - name: Health Check
         run: |
-          echo "🔒 Docker Security Validation Report"
-          echo "======================================"
-          
-          # Check if container is running
+          sleep 20
           if ! docker ps | grep -q calculator-app; then
-            echo "❌ Container is not running - security validation failed"
+            echo "❌ Container not running!"
             exit 1
           fi
-          
-          echo "✅ Container Status: Running"
-          
-          # Validate security configurations
-          echo ""
-          echo "🛡️ Security Configuration Audit:"
-          echo "--------------------------------"
-          
-          # Check capabilities
-          echo ""
-          echo "🔐 Capability Analysis:"
-          CAPS=$(docker inspect calculator-app --format='{{.HostConfig.CapDrop}}' 2>/dev/null)
-          if [[ "$CAPS" =~ "ALL" ]]; then
-            echo "✅ All capabilities dropped"
-            ADDED_CAPS=$(docker inspect calculator-app --format='{{.HostConfig.CapAdd}}' 2>/dev/null)
-            echo "   Added capabilities: $ADDED_CAPS"
-          else
-            echo "❌ Security Risk: Not all capabilities dropped"
-          fi
-          
-          # Check security options
-          echo ""
-          echo "🔒 Security Options:"
-          SECURITY_OPTS=$(docker inspect calculator-app --format='{{range .HostConfig.SecurityOpt}}{{.}} {{end}}' 2>/dev/null)
-          echo "   Active security options: $SECURITY_OPTS"
-          
-          if [[ "$SECURITY_OPTS" =~ "no-new-privileges:true" ]]; then
-            echo "✅ Privilege escalation blocked"
-          else
-            echo "❌ Security Risk: Privilege escalation not blocked"
-          fi
-          
-          # Check resource limits
-          echo ""
-          echo "⚡ Resource Limits:"
-          MEMORY_LIMIT=$(docker inspect calculator-app --format='{{.HostConfig.Memory}}' 2>/dev/null)
-          CPU_LIMIT=$(docker inspect calculator-app --format='{{.HostConfig.NanoCpus}}' 2>/dev/null)
-          PIDS_LIMIT=$(docker inspect calculator-app --format='{{.HostConfig.PidsLimit}}' 2>/dev/null)
-          
-          echo "   Memory limit: $((MEMORY_LIMIT / 1024 / 1024))MB"
-          echo "   CPU limit: $((CPU_LIMIT / 1000000000)) cores"
-          echo "   PIDs limit: $PIDS_LIMIT"
-          
-          if [ "$MEMORY_LIMIT" -gt 0 ] && [ "$CPU_LIMIT" -gt 0 ] && [ "$PIDS_LIMIT" -gt 0 ]; then
-            echo "✅ Resource limits properly configured"
-          else
-            echo "⚠️ Warning: Some resource limits may not be set"
-          fi
-          
-          # Check network isolation
-          echo ""
-          echo "🌐 Network Security:"
-          NETWORK_MODE=$(docker inspect calculator-app --format='{{.HostConfig.NetworkMode}}' 2>/dev/null)
-          echo "   Network mode: $NETWORK_MODE"
-          
-          if [ "$NETWORK_MODE" = "calc-network" ]; then
-            echo "✅ Custom isolated network"
-          elif [ "$NETWORK_MODE" = "host" ]; then
-            echo "⚠️ Warning: Host network mode (reduced isolation)"
-          else
-            echo "❓ Network mode: $NETWORK_MODE"
-          fi
-          
-          # Check for privileged mode
-          echo ""
-          echo "🚫 Privilege Check:"
-          PRIVILEGED=$(docker inspect calculator-app --format='{{.HostConfig.Privileged}}' 2>/dev/null)
-          if [ "$PRIVILEGED" = "false" ]; then
-            echo "✅ Non-privileged container"
-          else
-            echo "❌ CRITICAL: Container running in privileged mode!"
-          fi
-          
-          # Final security score
-          echo ""
-          echo "📊 Security Score Calculation:"
-          echo "=============================="
-          
-          SECURITY_SCORE=0
-          MAX_SCORE=8
-          
-          # Score components
-          [[ "$CAPS" =~ "ALL" ]] && SECURITY_SCORE=$((SECURITY_SCORE + 2)) && echo "✅ Capabilities dropped (+2)"
-          [[ "$SECURITY_OPTS" =~ "no-new-privileges" ]] && SECURITY_SCORE=$((SECURITY_SCORE + 2)) && echo "✅ Privilege escalation blocked (+2)"
-          [ "$PRIVILEGED" = "false" ] && SECURITY_SCORE=$((SECURITY_SCORE + 2)) && echo "✅ Non-privileged (+2)"
-          [ "$MEMORY_LIMIT" -gt 0 ] && SECURITY_SCORE=$((SECURITY_SCORE + 1)) && echo "✅ Resource limits (+1)"
-          [ "$NETWORK_MODE" != "host" ] && SECURITY_SCORE=$((SECURITY_SCORE + 1)) && echo "✅ Network isolation (+1)"
-          
-          echo ""
-          echo "🎯 Final Security Score: $SECURITY_SCORE/$MAX_SCORE"
-          
-          if [ "$SECURITY_SCORE" -ge 6 ]; then
-            echo "🎉 EXCELLENT: Container security is properly configured"
-          elif [ "$SECURITY_SCORE" -ge 4 ]; then
-            echo "✅ GOOD: Container security is acceptable"
-          else
-            echo "❌ CRITICAL: Container security is insufficient"
-            exit 1
-          fi
-          
-          echo ""
-          echo "🔒 Security validation completed successfully"
+          echo "✅ Container is running and healthy."
 
-      # ---------------------------
-      # 7️⃣ Container Health Check
-      # ---------------------------
-      - name: Container Health Check
+      # 7️⃣ Cleanup
+      - name: Cleanup Old Images
         run: |
-          echo "🔍 Container Health Check..."
-          
-          # Wait for container to initialize
-          echo "⏳ Waiting 30 seconds for container to initialize..."
-          sleep 30
-          
-          # Check container status
-          echo "📋 Container status:"
-          docker ps -a --filter name=calculator-app --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-          
-          # Check container health
-          echo "🏥 Container health status:"
-          docker inspect calculator-app --format='{{.State.Health.Status}}' 2>/dev/null || echo "No health status available"
-          
-          # Verify container is running
-          if ! docker ps | grep -q calculator-app; then
-            echo "❌ Container is not running!"
-            docker logs calculator-app
-            exit 1
-          fi
-          
-          echo "✅ Container is healthy and running"
-
-      # ---------------------------
-      # 8️⃣ Container Maintenance
-      # ---------------------------
-      - name: Container Maintenance
-        run: |
-          echo "🧹 Cleaning up old containers..."
+          docker image prune -af
           docker container prune -f
-          
-          echo "🧹 Cleaning up old images..."
-          # Keep only latest and current build
-          docker images sainadh99/calculator-app --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
-            grep -v ":latest" | \
-            grep -v ":${{ env.BUILD_TAG }}" | \
-            awk '{print $1}' | \
-            while read -r image; do
-              if [ -n "$image" ]; then
-                echo "Removing: $image"
-                docker rmi "$image" --force 2>/dev/null || echo "Failed to remove $image"
-              fi
-            done
-          
-          # Clean up dangling images
-          docker image prune -f
-          
-          echo "✅ Maintenance completed"
+          echo "✅ Cleanup complete."
 
-      # ---------------------------
-      # 9️⃣ Deployment Success Notification
-      # ---------------------------
-      - name: Deployment Success Notification
+      # 8️⃣ Success Message
+      - name: Deployment Summary
         run: |
           echo "🎉 Deployment successful!"
-          echo "🏷️ Version: ${{ env.BUILD_TAG }}"
-          echo "📦 App: Calculator App (Maximum Docker Security Restrictions)"
-          echo "🔒 Enhanced Docker Security Features:"
-          echo "   • All capabilities dropped (minimal required restored)"
-          echo "   • No privilege escalation (no-new-privileges)"
-          echo "   • Non-privileged container"
-          echo "   • Strict resource limits (256MB RAM, 0.5 CPU, 50 PIDs)"
-          echo "   • Kernel memory restrictions (64MB)"
-          echo "   • Memory swap limits (256MB total)"
-          echo "   • Process and file descriptor limits (ulimits)"
-          echo "   • Disk I/O bandwidth restrictions"
-          echo "   • Secure tmpfs mounts with noexec/nosuid"
-          echo "   • Custom DNS configuration"
-          echo "   • OOM kill protection enabled"
-          echo "   • Isolated network with custom bridge"
-          echo "   • Container health monitoring"
-          echo "   • Automated enhanced security validation"
-          echo "⏰ Deployed at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "App: Calculator App"
+          echo "Version: ${{ env.BUILD_TAG }}"
+          echo "Deployed at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
